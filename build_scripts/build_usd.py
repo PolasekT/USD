@@ -1345,7 +1345,7 @@ def InstallUSD(context, force, buildArgs):
     with CurrentWorkingDirectory(context.usdSrcDir):
         extraArgs = []
 
-        extraArgs.append('--DINTERPROCEDURAL_OPTIMIZATION=' + 
+        extraArgs.append('-DINTERPROCEDURAL_OPTIMIZATION=' + 
                          'OFF')
         
         extraArgs.append('-DPXR_PREFER_SAFETY_OVER_SPEED=' + 
