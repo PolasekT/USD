@@ -156,11 +156,6 @@ public:
     /// \sa UsdSchemaKind
     static const UsdSchemaKind schemaKind = UsdSchemaKind::SingleApplyAPI;
 
-    /// \deprecated
-    /// Same as schemaKind, provided to maintain temporary backward 
-    /// compatibility with older generated schemas.
-    static const UsdSchemaKind schemaType = UsdSchemaKind::SingleApplyAPI;
-
     /// Construct a UsdShadeMaterialBindingAPI on UsdPrim \p prim .
     /// Equivalent to UsdShadeMaterialBindingAPI::Get(prim.GetStage(), prim.GetPath())
     /// for a \em valid \p prim, but will not immediately throw an error for
@@ -203,6 +198,26 @@ public:
     Get(const UsdStagePtr &stage, const SdfPath &path);
 
 
+    /// Returns true if this <b>single-apply</b> API schema can be applied to 
+    /// the given \p prim. If this schema can not be a applied to the prim, 
+    /// this returns false and, if provided, populates \p whyNot with the 
+    /// reason it can not be applied.
+    /// 
+    /// Note that if CanApply returns false, that does not necessarily imply
+    /// that calling Apply will fail. Callers are expected to call CanApply
+    /// before calling Apply if they want to ensure that it is valid to 
+    /// apply a schema.
+    /// 
+    /// \sa UsdPrim::GetAppliedSchemas()
+    /// \sa UsdPrim::HasAPI()
+    /// \sa UsdPrim::CanApplyAPI()
+    /// \sa UsdPrim::ApplyAPI()
+    /// \sa UsdPrim::RemoveAPI()
+    ///
+    USDSHADE_API
+    static bool 
+    CanApply(const UsdPrim &prim, std::string *whyNot=nullptr);
+
     /// Applies this <b>single-apply</b> API schema to the given \p prim.
     /// This information is stored by adding "MaterialBindingAPI" to the 
     /// token-valued, listOp metadata \em apiSchemas on the prim.
@@ -214,6 +229,7 @@ public:
     /// 
     /// \sa UsdPrim::GetAppliedSchemas()
     /// \sa UsdPrim::HasAPI()
+    /// \sa UsdPrim::CanApplyAPI()
     /// \sa UsdPrim::ApplyAPI()
     /// \sa UsdPrim::RemoveAPI()
     ///
@@ -227,12 +243,6 @@ protected:
     /// \sa UsdSchemaKind
     USDSHADE_API
     UsdSchemaKind _GetSchemaKind() const override;
-
-    /// \deprecated
-    /// Same as _GetSchemaKind, provided to maintain temporary backward 
-    /// compatibility with older generated schemas.
-    USDSHADE_API
-    UsdSchemaKind _GetSchemaType() const override;
 
 private:
     // needs to invoke _GetStaticTfType.
@@ -368,11 +378,16 @@ public:
         /// that is bound by this collection-binding.
         USDSHADE_API
         UsdCollectionAPI GetCollection() const;
+
+        /// Checks if the \p bindingRel identifies a collection
+        USDSHADE_API
+        static bool IsCollectionBindingRel(const UsdRelationship &bindingRel);
         
-        /// Returns true if the CollectionBinding points to a valid material
-        /// and collection.
+        /// Returns true if the CollectionBinding points to a non-empty material
+        /// path and collection.
         bool IsValid() const {
-            return GetCollection() && GetMaterial();
+            return CollectionBinding::IsCollectionBindingRel(_bindingRel) 
+                && !GetMaterialPath().IsEmpty();
         }
         /// Returns the path to the collection that is bound by this binding.
         const SdfPath &GetCollectionPath() const { 
@@ -558,6 +573,10 @@ public:
     /// the given \p materialPurpose on this prim. It accomplishes this by 
     /// blocking the targets of the associated binding relationship in the 
     /// current edit target.
+    ///
+    /// If a binding was created without specifying a \p bindingName, then
+    /// the correct \p bindingName to use for unbinding is the instance name
+    /// of the targetted collection.
     USDSHADE_API
     bool UnbindCollectionBinding(
         const TfToken &bindingName, 
@@ -693,7 +712,15 @@ public:
     using BindingsCache = tbb::concurrent_unordered_map<SdfPath,
             std::unique_ptr<BindingsAtPrim>, SdfPath::Hash>;
 
-    /// \overload
+    /// Returns a vector of the possible values for the 'material purpose'.
+    USDSHADE_API
+    static TfTokenVector GetMaterialPurposes();
+
+    /// returns the path of the resolved target identified by \p bindingRel.
+    USDSHADE_API
+    static const SdfPath GetResolvedTargetPathFromBindingRel(
+            const UsdRelationship &bindingRel);
+
     /// Computes the resolved bound material for this prim, for the given 
     /// material purpose. 
     /// 
@@ -727,6 +754,16 @@ public:
     /// 
     /// If \p bindingRel is not null, then it is set to the "winning" binding
     /// relationship.
+    ///
+    /// Note the resolved bound material is considered valid if the target path 
+    /// of the binding relationship is a valid non-empty prim path. This makes 
+    /// sure winning binding relationship and the bound material remain consistent
+    /// consistent irrespective of the presence/absence of prim at material 
+    /// path. For ascenario where ComputeBoundMaterial returns a invalid 
+    /// UsdShadeMaterial with a valid winning bindingRel, clients can use the  
+    /// static method 
+    /// UsdShadeMaterialBindingAPI::GetResolvedTargetPathFromBindingRel to get 
+    /// the path of the resolved target identified by the winning bindingRel.
     ///
     /// See \ref UsdShadeMaterialBindingAPI_MaterialResolution "Bound Material Resolution"
     /// for details on the material resolution process.

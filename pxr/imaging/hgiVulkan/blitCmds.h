@@ -75,7 +75,10 @@ public:
     void GenerateMipMaps(HgiTextureHandle const& texture) override;
 
     HGIVULKAN_API
-    void MemoryBarrier(HgiMemoryBarrier barrier) override;
+    void FillBuffer(HgiBufferHandle const& buffer, uint8_t value) override;
+
+    HGIVULKAN_API
+    void InsertMemoryBarrier(HgiMemoryBarrier barrier) override;
         
     /// Returns the command buffer used inside this cmds.
     HGIVULKAN_API

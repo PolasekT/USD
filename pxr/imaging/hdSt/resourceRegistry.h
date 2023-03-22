@@ -45,6 +45,13 @@
 #include <map>
 #include <memory>
 
+#ifdef PXR_MATERIALX_SUPPORT_ENABLED
+#include <MaterialXCore/Library.h>
+MATERIALX_NAMESPACE_BEGIN
+    using ShaderPtr = std::shared_ptr<class Shader>;
+MATERIALX_NAMESPACE_END
+#endif
+
 PXR_NAMESPACE_OPEN_SCOPE
 
 using HdComputationSharedPtr = std::shared_ptr<class HdComputation>;
@@ -81,6 +88,7 @@ using HgiComputePipelineSharedPtr =
 
 class HdStTextureIdentifier;
 class HdSamplerParameters;
+class HdStStagingBuffer;
 
 /// \enum HdStComputeQueue
 ///
@@ -141,8 +149,7 @@ public:
     ///
 
     /// Allocate texture handle (encapsulates texture and sampler
-    /// object, bindless texture sampler handle, memory request and
-    /// callback to shader).
+    /// object, memory request and callback to shader).
     ///
     /// The actual allocation of the associated GPU texture and
     /// sampler resources and loading of the texture file is delayed
@@ -163,9 +170,6 @@ public:
         /// associated to the texture.
         /// If all memory requests are 0, no down-sampling will happen.
         size_t memoryRequest,
-        /// Also create a GL texture sampler handle for bindless
-        /// textures.
-        bool createBindlessHandle,
         /// After the texture is committed (or after it has been
         /// changed) the given shader code can add additional buffer
         /// sources and computations using the texture metadata with
@@ -416,6 +420,13 @@ public:
     HdInstance<HioGlslfxSharedPtr>
     RegisterGLSLFXFile(HdInstance<HioGlslfxSharedPtr>::ID id);
 
+#ifdef PXR_MATERIALX_SUPPORT_ENABLED
+    /// Register MaterialX GLSLFX Shader.
+    HDST_API
+    HdInstance<MaterialX::ShaderPtr>
+    RegisterMaterialXShader(HdInstance<MaterialX::ShaderPtr>::ID id);
+#endif
+
     /// Register a Hgi resource bindings into the registry.
     HDST_API
     HdInstance<HgiResourceBindingsSharedPtr>
@@ -445,7 +456,8 @@ public:
     /// The returned pointer should not be held onto by the client as it is
     /// only valid until the HgiComputeCmds has been submitted.
     HDST_API
-    HgiComputeCmds* GetGlobalComputeCmds();
+    HgiComputeCmds* GetGlobalComputeCmds(
+        HgiComputeDispatch dispatchMethod = HgiComputeDispatchSerial);
 
     /// Submits blit work queued in global blit cmds for GPU execution.
     /// We can call this when we want to submit some work to the GPU.
@@ -462,6 +474,10 @@ public:
     /// barrier a HgiMemoryBarrier can be provided.
     HDST_API
     void SubmitComputeWork(HgiSubmitWaitType wait = HgiSubmitWaitTypeNoWait);
+
+    /// Returns the staging buffer used when committing data to the GPU.
+    HDST_API
+    HdStStagingBuffer* GetStagingBuffer();
 
 public:
     //
@@ -570,7 +586,7 @@ private:
 
     typedef tbb::concurrent_vector<_PendingSource> _PendingSourceList;
     _PendingSourceList    _pendingSources;
-    std::atomic_size_t   _numBufferSourcesToResolve;
+    std::atomic_size_t    _numBufferSourcesToResolve;
     
     struct _PendingComputation{
         _PendingComputation(HdBufferArrayRangeSharedPtr const &range,
@@ -652,6 +668,11 @@ private:
     HdInstanceRegistry<HioGlslfxSharedPtr>
         _glslfxFileRegistry;
 
+#ifdef PXR_MATERIALX_SUPPORT_ENABLED
+    // MaterialX glslfx shader registry
+    HdInstanceRegistry<MaterialX::ShaderPtr> _materialXShaderRegistry;
+#endif
+
     // texture handle registry
     std::unique_ptr<class HdSt_TextureHandleRegistry> _textureHandleRegistry;
 
@@ -669,6 +690,8 @@ private:
 
     HgiBlitCmdsUniquePtr _blitCmds;
     HgiComputeCmdsUniquePtr _computeCmds;
+
+    std::unique_ptr<HdStStagingBuffer> _stagingBuffer;
 };
 
 

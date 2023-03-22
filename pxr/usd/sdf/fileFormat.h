@@ -27,6 +27,7 @@
 /// \file sdf/fileFormat.h
 
 #include "pxr/pxr.h"
+#include "pxr/usd/ar/ar.h"
 #include "pxr/usd/sdf/api.h"
 #include "pxr/usd/sdf/declareHandles.h"
 #include "pxr/base/tf/declarePtrs.h"
@@ -131,6 +132,12 @@ public:
     virtual SdfAbstractDataRefPtr
     InitData(const FileFormatArguments& args) const;
 
+    /// Returns a new SdfAbstractData providing access to the layer's data.
+    /// This data object is detached from any underlying storage.
+    SDF_API
+    SdfAbstractDataRefPtr InitDetachedData(
+        const FileFormatArguments& args) const;
+
     /// Instantiate a layer.
     SDF_API 
     SdfLayerRefPtr NewLayer(const SdfFileFormatConstPtr &fileFormat,
@@ -143,21 +150,19 @@ public:
     /// layers.
     SDF_API bool ShouldSkipAnonymousReload() const;
 
-    /// Return true if layers produced by this file format are based
-    /// on physical files on disk. If so, this file format requires
-    /// layers to be serialized to and read from files on disk.
-    ///
-    /// For file formats where this function returns true, when
-    /// opening a layer Sdf will fetch layers to the filesystem 
-    /// via calls to ArResolver::FetchToLocalResolvedPath prior 
-    /// to calling ReadFromFile.
-    ///
-    /// This allows asset systems that do not store layers as individual
-    /// files to operate with file formats that require these files.
-    ///
-    /// \sa ArResolver::Resolve
-    /// \sa ArResolver::FetchToLocalResolvedPath
-    SDF_API bool LayersAreFileBased() const;
+    /// Returns true if anonymous layer identifiers should be passed to Read 
+    /// when a layer is opened or reloaded.
+    /// 
+    /// Anonymous layers will not have an asset backing and thus for most
+    /// file formats there is nothing that can be read for an anonymous layer. 
+    /// However, there are file formats that use Read to generate dynamic layer 
+    /// content without reading any data from the resolved asset associated with
+    /// the layer's identifier. 
+    /// 
+    /// For these types of file formats it is useful to be able to open 
+    /// anonymous layers and allow Read to populate them to avoid requiring a
+    /// placeholder asset to exist just so Read can populate the layer.
+    SDF_API bool ShouldReadAnonymousLayers() const;
 
     /// Returns true if \p file can be read by this format.
     SDF_API
@@ -179,6 +184,24 @@ public:
         SdfLayer* layer,
         const std::string& resolvedPath,
         bool metadataOnly) const = 0;
+
+    /// Reads scene description from the asset specified by \p resolvedPath
+    /// into the detached layer \p layer. After reading is completed,
+    /// \p layer must be detached from any underlying storage.
+    ///
+    /// \p metadataOnly is a flag that asks for only the layer metadata
+    /// to be read in, which can be much faster if that is all that is
+    /// required.  Note that this is just a hint: some FileFormat readers
+    /// may disregard this flag and still fully populate the layer contents.
+    ///
+    /// Returns true if the asset is successfully read into \p layer,
+    /// false if the the asset could not be read or if the resulting
+    /// layer is not detached.
+    SDF_API
+    bool ReadDetached(
+        SdfLayer* layer,
+        const std::string& resolvedPath,
+        bool metadataOnly) const;
 
     /// Writes the content in \p layer into the file at \p filePath. If the
     /// content is successfully written, this method returns true. Otherwise,
@@ -350,7 +373,28 @@ protected:
     SDF_API
     static SdfAbstractDataConstPtr _GetLayerData(const SdfLayer& layer);
 
-private:
+    /// Helper function for _ReadDetached.
+    ///
+    /// Calls Read with the given parameters. If successful and \p layer is
+    /// not detached (i.e., SdfLayer::IsDetached returns false) copies the layer
+    /// data into an SdfData object and set that into \p layer. If this copy
+    /// occurs and \p didCopyData is given, it will be set to true.
+    ///
+    /// Note that the copying process is a simple spec-by-spec, field-by-field
+    /// value copy. This process may not produce detached layers if the data
+    /// object used by \p layer after the initial call to Read returns VtValues
+    /// that are not detached. One example is a VtValue holding a VtArray backed
+    /// by a foreign data source attached to a memory mapping.
+    ///
+    /// Returns true if Read was successful, false otherwise.
+    SDF_API
+    bool _ReadAndCopyLayerDataToMemory(
+        SdfLayer* layer,
+        const std::string& resolvedPath,
+        bool metadataOnly,
+        bool* didCopyData = nullptr) const;
+
+protected:
     SDF_API
     virtual SdfLayer *_InstantiateNewLayer(
         const SdfFileFormatConstPtr &fileFormat,
@@ -365,11 +409,40 @@ private:
     virtual bool _ShouldSkipAnonymousReload() const;
 
     /// File format subclasses may override this to specify whether
-    /// their layers are backed by physical files on disk.
-    /// Default implementation returns true.
-    SDF_API
-    virtual bool _LayersAreFileBased() const;
+    /// Read should be called when creating, opening, or reloading an anonymous
+    /// layer of this format.
+    /// Default implementation returns false.
+    SDF_API 
+    virtual bool _ShouldReadAnonymousLayers() const;
 
+    /// \see InitDetachedData
+    ///
+    /// This function must return a new SdfAbstractData object that is
+    /// detached, i.e. SdfAbstractData::IsDetached returns false.
+    ///
+    /// The default implementation returns an SdfData object.
+    SDF_API
+    virtual SdfAbstractDataRefPtr _InitDetachedData(
+        const FileFormatArguments& args) const;
+
+    /// \see ReadDetached
+    ///
+    /// Upon completion, \p layer must have an SdfAbstractData object set that
+    /// is detached, i.e. SdfAbstractData::IsDetached returns false.
+    ///
+    /// The default implementation calls _ReadAndCopyLayerDataToMemory to read
+    /// the specified layer and copy its data into an SdfData object if it is
+    /// not detached. If data is copied, a warning will be issued since
+    /// this may be an expensive operation. If the above behavior is desired,
+    /// subclasses can just call _ReadAndCopyLayerDataToMemory to do the same
+    /// thing but without the warning.
+    SDF_API
+    virtual bool _ReadDetached(
+        SdfLayer* layer,
+        const std::string& resolvedPath,
+        bool metadataOnly) const;
+
+private:
     const SdfSchemaBase& _schema;
     const TfToken _formatId;
     const TfToken _target;
@@ -382,6 +455,7 @@ private:
 // Base file format factory.
 class Sdf_FileFormatFactoryBase : public TfType::FactoryBase {
 public:
+    SDF_API virtual ~Sdf_FileFormatFactoryBase();
     virtual SdfFileFormatRefPtr New() const = 0;
 };
 

@@ -72,6 +72,12 @@ enum HgiFormat : int
     HgiFormatFloat32Vec3,
     HgiFormatFloat32Vec4,
 
+    // Int16 - a 2-byte signed integer
+    HgiFormatInt16,
+    HgiFormatInt16Vec2,
+    HgiFormatInt16Vec3,
+    HgiFormatInt16Vec4,
+
     // UInt16 - a 2-byte unsigned integer
     HgiFormatUInt16,
     HgiFormatUInt16Vec2,
@@ -116,6 +122,10 @@ enum HgiFormat : int
 
     // Depth stencil format (Float32 can be used for just depth)
     HgiFormatFloat32UInt8,
+
+    // Packed 32-bit value with four normalized signed two's complement
+    // integer values arranged as 10 bits, 10 bits, 10 bits, and 2 bits.
+    HgiFormatPackedInt1010102,
 
     HgiFormatCount
 };
@@ -162,6 +172,12 @@ HGI_API
 size_t HgiGetDataSize(
     HgiFormat f,
     const GfVec3i &dimensions);
+
+/// Returns the scalar type of the format, in the form of an HgiFormat, if
+/// possible.
+HGI_API
+HgiFormat HgiGetComponentBaseFormat(
+    HgiFormat f);
 
 /// Returns mip infos.
 ///

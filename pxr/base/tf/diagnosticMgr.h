@@ -45,8 +45,8 @@
 
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/spin_rw_mutex.h>
-#include <tbb/atomic.h>
 
+#include <atomic>
 #include <cstdarg>
 #include <list>
 #include <string>
@@ -255,8 +255,9 @@ public:
 
     /// This method will issue a fatal error to all delegates.
     ///
-    /// If no delegates have been registered, this method will print the error
-    /// msg and abort the process.
+    /// If no delegates have been registered, or if none of the delegates abort
+    /// the process, this method will print the error msg and abort the process.
+    [[noreturn]]
     TF_API
     void PostFatal(TfCallContext const &context, TfEnum statusCode,
                    std::string const &msg) const;
@@ -377,7 +378,7 @@ public:
               _statusCode(statusCode)
         {
         }
-        
+        [[noreturn]]
         void Post(const std::string &str) const {
             This::GetInstance().PostFatal(_context, _statusCode, str);
         }
@@ -434,7 +435,7 @@ private:
     mutable tbb::spin_rw_mutex _delegatesMutex;
 
     // Global serial number for sorting.
-    tbb::atomic<size_t> _nextSerial;
+    std::atomic<size_t> _nextSerial;
 
     // Thread-specific error list.
     tbb::enumerable_thread_specific<ErrorList> _errorList;

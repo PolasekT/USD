@@ -32,6 +32,7 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+struct HgiComputeCmdsDesc;
 class HgiVulkan;
 class HgiVulkanCommandBuffer;
 
@@ -69,13 +70,16 @@ public:
     void Dispatch(int dimX, int dimY) override;
 
     HGIVULKAN_API
-    void MemoryBarrier(HgiMemoryBarrier barrier) override;
+    void InsertMemoryBarrier(HgiMemoryBarrier barrier) override;
+
+    HGIVULKAN_API
+    HgiComputeDispatch GetDispatchMethod() const override;
 
 protected:
     friend class HgiVulkan;
 
     HGIVULKAN_API
-    HgiVulkanComputeCmds(HgiVulkan* hgi);
+    HgiVulkanComputeCmds(HgiVulkan* hgi, HgiComputeCmdsDesc const& desc);
 
     HGIVULKAN_API
     bool _Submit(Hgi* hgi, HgiSubmitWaitType wait) override;
@@ -95,6 +99,7 @@ private:
     bool _pushConstantsDirty;
     uint8_t* _pushConstants;
     uint32_t _pushConstantsByteSize;
+    GfVec3i _localWorkGroupSize;
 
     // Cmds is used only one frame so storing multi-frame state on will not
     // survive.

@@ -107,15 +107,21 @@ HgiGLBlitCmds::CopyBufferToTexture(HgiBufferToTextureOp const& copyOp)
 }
 
 void
+HgiGLBlitCmds::FillBuffer(HgiBufferHandle const& buffer, uint8_t value)
+{
+    _ops.push_back( HgiGLOps::FillBuffer(buffer, value) );
+}
+
+void
 HgiGLBlitCmds::GenerateMipMaps(HgiTextureHandle const& texture)
 {
     _ops.push_back( HgiGLOps::GenerateMipMaps(texture) );
 }
 
 void
-HgiGLBlitCmds::MemoryBarrier(HgiMemoryBarrier barrier)
+HgiGLBlitCmds::InsertMemoryBarrier(HgiMemoryBarrier barrier)
 {
-    _ops.push_back( HgiGLOps::MemoryBarrier(barrier) );
+    _ops.push_back( HgiGLOps::InsertMemoryBarrier(barrier) );
 }
 
 bool

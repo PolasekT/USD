@@ -49,7 +49,7 @@ HdRendererPluginRegistry::HdRendererPluginRegistry()
 HdRendererPluginRegistry::~HdRendererPluginRegistry() = default;
 
 TfToken 
-HdRendererPluginRegistry::GetDefaultPluginId()
+HdRendererPluginRegistry::GetDefaultPluginId(bool gpuEnabled)
 {
     // Get all the available plugins to see if any of them is supported on this
     // platform and use the first one as the default.
@@ -67,7 +67,7 @@ HdRendererPluginRegistry::GetDefaultPluginId()
         // Important to bail out as soon as we found a plugin that works to
         // avoid loading plugins unnecessary as that can be arbitrarily
         // expensive.
-        if (plugin && plugin->IsSupported()) {
+        if (plugin && plugin->IsSupported(gpuEnabled)) {
             HdRendererPluginRegistry::GetInstance().ReleasePlugin(plugin);
             return desc.id;
         }
@@ -100,8 +100,20 @@ HdRendererPluginRegistry::CreateRenderDelegate(
         TF_CODING_ERROR("Couldn't find plugin for id %s", pluginId.GetText());
         return nullptr;
     }
-    
-    return plugin->CreateDelegate(settingsMap);
+
+    HdPluginRenderDelegateUniqueHandle result =
+        plugin->CreateDelegate(settingsMap);
+
+    if (result) {
+        HfPluginDesc desc;
+        if (GetPluginDesc(pluginId, &desc)) {
+            // provide render delegate instance with display name to facilitate
+            // association of this renderer to other code and resources
+            result->_SetRendererDisplayName(desc.displayName);
+        }
+    }
+
+    return result;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

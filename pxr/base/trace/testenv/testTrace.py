@@ -52,6 +52,7 @@ class TestTrace(unittest.TestCase):
 
         gr = Trace.Reporter.globalReporter
         self.assertIsInstance(gr, Trace.Reporter)
+        gr.shouldAdjustForOverheadAndNoise = False
 
         if not os.getenv('PXR_ENABLE_GLOBAL_TRACE', False):
             self.assertEqual(gc.enabled , False)
@@ -203,13 +204,28 @@ class TestTrace(unittest.TestCase):
 
         gc.enabled = True
         sleepTime = 1.0
+        pre_begin = time.time()
         b = gc.BeginEvent("Test tuple")
+        post_begin = time.time()
         time.sleep(sleepTime)
+        pre_end = time.time()
         e = gc.EndEvent("Test tuple")
-        elapsedSeconds = Trace.GetElapsedSeconds(b, e)
-        gr.Report()
-        self.assertTrue(abs(elapsedSeconds - sleepTime) < 0.05)
+        post_end = time.time()
 
+        elapsedSeconds = Trace.GetElapsedSeconds(b, e)
+        expectedMinSeconds = pre_end - post_begin
+        expectedMaxSeconds = post_end - pre_begin
+        gr.Report()
+
+        epsilon = 0.005
+        self.assertGreater(elapsedSeconds, expectedMinSeconds - epsilon,
+                        "Elapsed: {} Expected Min: {} Diff: {}".format(
+                            elapsedSeconds, expectedMinSeconds,
+                            expectedMinSeconds - elapsedSeconds))
+        self.assertLess(elapsedSeconds, expectedMaxSeconds + epsilon,
+                        "Elapsed: {} Expected Max: {} Diff: {}".format(
+                            elapsedSeconds, expectedMaxSeconds,
+                            elapsedSeconds - expectedMaxSeconds))
         print("")
 
 if __name__ == '__main__':

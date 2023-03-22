@@ -105,11 +105,6 @@ public:
     USDIMAGING_API
     void SyncAll(bool includeUnvarying);
 
-    /// Opportunity for the delegate to clean itself up after
-    /// performing parrellel work during sync phase
-    USDIMAGING_API
-    virtual void PostSyncCleanup() override;
-
     /// Populates the rootPrim in the HdRenderIndex.
     USDIMAGING_API
     void Populate(UsdPrim const& rootPrim);
@@ -197,7 +192,7 @@ public:
     void SetCullStyleFallback(HdCullStyle cullStyle);
 
     /// Sets the root transform for the entire delegate, which is applied to all
-    /// render prims generated. Settting this value will immediately invalidate
+    /// render prims generated. Setting this value will immediately invalidate
     /// existing rprim transforms.
     USDIMAGING_API
     void SetRootTransform(GfMatrix4d const& xf);
@@ -206,7 +201,7 @@ public:
     const GfMatrix4d &GetRootTransform() const { return _rootXf; }
 
     /// Sets the root visibility for the entire delegate, which is applied to
-    /// all render prims generated. Settting this value will immediately
+    /// all render prims generated. Setting this value will immediately
     /// invalidate existing rprim visibility.
     USDIMAGING_API
     void SetRootVisibility(bool isVisible);
@@ -416,6 +411,12 @@ public:
                      int instanceIndex,
                      HdInstancerContext *instancerContext = nullptr) override;
 
+    USDIMAGING_API
+    virtual SdfPathVector
+    GetScenePrimPaths(SdfPath const& rprimId,
+                      std::vector<int> instanceIndices,
+                      std::vector<HdInstancerContext> *instancerContexts = nullptr) override;
+
     // ExtComputation support
     USDIMAGING_API
     TfTokenVector
@@ -558,15 +559,27 @@ private:
     void _OnUsdObjectsChanged(UsdNotice::ObjectsChanged const&,
                               UsdStageWeakPtr const& sender);
 
+    // Map holding USD subtree path keys mapped to associated hydra prim cache
+    // paths. This may be prepopulated and provided to the Refresh and Resync
+    // methods below to speed up dependency gathering.
+    typedef TfHashMap<SdfPath, SdfPathVector, SdfPath::Hash>
+        _FlattenedDependenciesCacheMap;
+
     // The lightest-weight update, it does fine-grained invalidation of
     // individual properties at the given path (prim or property).
     //
     // If \p path is a prim path, changedPrimInfoFields will be populated
     // with the list of scene description fields that caused this prim to
     // be refreshed.
-    void _RefreshUsdObject(SdfPath const& usdPath, 
+    //
+    // Returns whether the prim or the subtree rooted at `usdPath` needed to
+    // be resync'd (i.e., removed and repopulated).
+    //
+    bool _RefreshUsdObject(SdfPath const& usdPath, 
                            TfTokenVector const& changedPrimInfoFields,
-                           UsdImagingIndexProxy* proxy);
+                           _FlattenedDependenciesCacheMap const &cache,
+                           UsdImagingIndexProxy* proxy,
+                           SdfPathSet* allTrackedVariabilityPaths); 
 
     // Heavy-weight invalidation of an entire prim subtree. All cached data is
     // reconstructed for all prims below \p rootPath.
@@ -575,7 +588,9 @@ private:
     // Repopulate() on those prims individually. If repopulateFromRoot is
     // true, Repopulate() will be called on \p rootPath instead. This is slower,
     // but handles changes in tree topology.
-    void _ResyncUsdPrim(SdfPath const& usdRootPath, UsdImagingIndexProxy* proxy,
+    void _ResyncUsdPrim(SdfPath const& usdRootPath,
+                        _FlattenedDependenciesCacheMap const &cache,
+                        UsdImagingIndexProxy* proxy,
                         bool repopulateFromRoot = false);
 
     // ---------------------------------------------------------------------- //
@@ -662,8 +677,18 @@ private:
     // Map from USD path to Hydra path, for tracking USD->hydra dependencies.
     _DependencyMap _dependencyInfo;
 
+    // Appends hydra prim cache paths corresponding to the USD subtree
+    // provided by looking up the dependency map (above).
     void _GatherDependencies(SdfPath const& subtree,
                              SdfPathVector *affectedCachePaths);
+
+    // Overload that takes an additional cache argument to help speed up the
+    // dependency gathering operation. The onus is on the client to prepopulate
+    // the cache.
+    void
+    _GatherDependencies(SdfPath const &subtree,
+                        _FlattenedDependenciesCacheMap const &cache,
+                        SdfPathVector *affectedCachePaths);
 
     // SdfPath::ReplacePrefix() is used frequently to convert between
     // cache path and Hydra render index path and is a performance bottleneck.
@@ -684,16 +709,16 @@ private:
     _HdPrimInfo *_GetHdPrimInfo(const SdfPath &cachePath);
 
     Usd_PrimFlagsConjunction _GetDisplayPredicate() const;
+    Usd_PrimFlagsConjunction _GetDisplayPredicateForPrototypes() const;
 
     // Mark render tags dirty for all prims.
     // This is done in response to toggling the purpose-based display settings.
     void _MarkRenderTagsDirty();
 
+    typedef TfHashSet<SdfPath, SdfPath::Hash> _DirtySet;
 
-    typedef TfHashSet<SdfPath, SdfPath::Hash> _InstancerSet;
-
-    // Set of cache paths representing instancers
-    _InstancerSet _instancerPrimCachePaths;
+    // Set of cache paths that are due a Sync()
+    _DirtySet _dirtyCachePaths;
 
     /// Refinement level per-USD-prim and fallback.
     typedef TfHashMap<SdfPath, int, SdfPath::Hash> _RefineLevelMap;
@@ -745,7 +770,6 @@ private:
     UsdImaging_XformCache _xformCache;
     UsdImaging_MaterialBindingImplData _materialBindingImplData;
     UsdImaging_MaterialBindingCache _materialBindingCache;
-    UsdImaging_CoordSysBindingImplData _coordSysBindingImplData;
     UsdImaging_CoordSysBindingCache _coordSysBindingCache;
     UsdImaging_VisCache _visCache;
     UsdImaging_PurposeCache _purposeCache;
@@ -753,6 +777,8 @@ private:
     UsdImaging_CollectionCache _collectionCache;
     UsdImaging_InheritedPrimvarCache _inheritedPrimvarCache;
     UsdImaging_PointInstancerIndicesCache _pointInstancerIndicesCache;
+    UsdImaging_NonlinearSampleCountCache _nonlinearSampleCountCache;
+    UsdImaging_BlurScaleCache _blurScaleCache;
 
     // Pickability
     PickabilityMap _pickablesMap;

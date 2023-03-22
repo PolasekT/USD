@@ -75,16 +75,14 @@ public:
 
 protected:
     HGIMETAL_API
-    void _Execute(
-        std::ostream &ss, 
-        const std::string &originalShaderShader) override;
+    void _Execute(std::ostream &ss) override;
 
 private:
     HgiMetalShaderStageEntryPointUniquePtr
     _BuildShaderStageEntryPoints(
         const HgiShaderFunctionDesc &descriptor);
 
-    void _BuildTextureShaderSections(const HgiShaderFunctionDesc &descriptor);
+    void _BuildKeywordInputShaderSections(const HgiShaderFunctionDesc &descriptor);
 
     HgiMetalShaderSectionUniquePtrVector _shaderSections;
     HgiMetalShaderStageEntryPointUniquePtr _generatorShaderSections;

@@ -31,17 +31,25 @@ TF_DEFINE_PUBLIC_TOKENS(HdInstancerTokens, HD_INSTANCER_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdReprTokens, HD_REPR_TOKENS);
 
+TF_DEFINE_PUBLIC_TOKENS(HdCullStyleTokens, HD_CULLSTYLE_TOKENS);
+
 TF_DEFINE_PUBLIC_TOKENS(HdPerfTokens, HD_PERF_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdShaderTokens, HD_SHADER_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdRenderTagTokens, HD_RENDERTAG_TOKENS);
 
+TF_DEFINE_PUBLIC_TOKENS(HdRenderContextTokens, HD_RENDER_CONTEXT_TOKENS);
+
 TF_DEFINE_PUBLIC_TOKENS(HdMaterialTagTokens, HD_MATERIALTAG_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdMaterialTerminalTokens, HD_MATERIAL_TERMINAL_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdOptionTokens, HD_OPTION_TOKENS);
+
+TF_DEFINE_PUBLIC_TOKENS(HdRprimTypeTokens, HD_RPRIMTYPE_TOKENS);
+TF_DEFINE_PUBLIC_TOKENS(HdSprimTypeTokens, HD_SPRIMTYPE_TOKENS);
+TF_DEFINE_PUBLIC_TOKENS(HdBprimTypeTokens, HD_BPRIMTYPE_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdPrimTypeTokens, HD_PRIMTYPE_TOKENS);
 
@@ -51,7 +59,35 @@ TF_DEFINE_PUBLIC_TOKENS(HdAovTokens, HD_AOV_TOKENS);
 
 TF_DEFINE_PUBLIC_TOKENS(HdRenderSettingsTokens, HD_RENDER_SETTINGS_TOKENS);
 
+TF_DEFINE_PUBLIC_TOKENS(HdRenderSettingsPrimTokens,
+                        HD_RENDER_SETTINGS_PRIM_TOKENS);
+
 TF_DEFINE_PUBLIC_TOKENS(HdResourceTypeTokens, HD_RESOURCE_TYPE_TOKENS);
+
+TF_DEFINE_PUBLIC_TOKENS(HdSceneIndexEmulationTokens, 
+    HD_SCENE_INDEX_EMULATION_TOKENS);
+
+bool HdPrimTypeIsGprim(TfToken const& primType)
+{
+    return (primType == HdPrimTypeTokens->mesh ||
+            primType == HdPrimTypeTokens->basisCurves ||
+            primType == HdPrimTypeTokens->points ||
+            primType == HdPrimTypeTokens->volume);
+}
+
+bool HdPrimTypeIsLight(TfToken const& primType)
+{
+    return (primType == HdPrimTypeTokens->simpleLight ||
+            primType == HdPrimTypeTokens->cylinderLight ||
+            primType == HdPrimTypeTokens->diskLight ||
+            primType == HdPrimTypeTokens->distantLight ||
+            primType == HdPrimTypeTokens->domeLight ||
+            primType == HdPrimTypeTokens->light ||
+            primType == HdPrimTypeTokens->pluginLight ||
+            primType == HdPrimTypeTokens->rectLight ||
+            primType == HdPrimTypeTokens->sphereLight ||
+            primType == HdPrimTypeTokens->meshLight);
+}
 
 TfToken HdAovTokensMakePrimvar(TfToken const& primvar)
 {

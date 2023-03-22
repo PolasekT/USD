@@ -22,7 +22,9 @@ pxr_library(hd
     PUBLIC_CLASSES
         aov
         basisCurves
+        basisCurvesSchema
         basisCurvesTopology
+        basisCurvesTopologySchema
         binding
         bprim
         bufferArray
@@ -32,12 +34,30 @@ pxr_library(hd
         bufferSource
         bufferSpec
         camera
+        cameraSchema
+        capsuleSchema
+        categoriesSchema
         changeTracker
+        command
         compExtCompInputSource
         computation
+        coneSchema
+        containerDataSourceEditor
         coordSys
+        coordSysBindingSchema
+        cubeSchema
+        cylinderSchema
+        dataSource
+        dataSourceLegacyPrim
+        dataSourceLocator
+        dataSourceMaterialNetworkInterface
         debugCodes
+        dependenciesSchema
+        dependencyForwardingSceneIndex
+        dependencySchema
+        dirtyBitsTranslator
         dirtyList
+        displayFilterSchema
         drawingCoord
         drawItem
         engine
@@ -47,44 +67,99 @@ pxr_library(hd
         extCompPrimvarBufferSource
         extComputation
         extComputationContext
+        extComputationContextInternal
+        extComputationInputComputationSchema
+        extComputationOutputSchema
+        extComputationPrimvarSchema
+        extComputationPrimvarsSchema
+        extComputationSchema
         extComputationUtils
+        extentSchema
         field
+        filteringSceneIndex
+        flatteningSceneIndex
         flatNormals
         geomSubset
+        geomSubsetSchema
+        geomSubsetsSchema
+        instanceCategoriesSchema
+        instancedBySchema
         instancer
         instanceRegistry
+        instancerTopologySchema
+        instanceSchema
+        lazyContainerDataSource
+        legacyDisplayStyleSchema
+        legacyPrimSceneIndex
         light
+        lightSchema
+        mapContainerDataSource
         material
+        materialBindingSchema
+        materialConnectionSchema
+        materialFilteringSceneIndexBase
+        materialNetworkSchema
+        materialNetwork2Interface
+        materialNodeSchema
+        materialSchema
+        mergingSceneIndex
         mesh
+        meshSchema
         meshTopology
+        meshTopologySchema
         meshUtil
+        noticeBatchingSceneIndex
+        overlayContainerDataSource
         perfLog
         pluginRenderDelegateUniqueHandle
         points
+        prefixingSceneIndex
+        primDataSourceOverlayCache
         primGather
+        primOriginSchema
         primTypeIndex
+        primvarSchema
+        primvarsSchema
+        purposeSchema
         renderBuffer
+        renderBufferSchema
         renderDelegate
-        renderIndex
-        renderPass
-        renderPassState
         rendererPlugin
         rendererPluginHandle
         rendererPluginRegistry
+        renderIndex
+        renderPass
+        renderPassState
+        renderSettings
+        renderSettingsSchema
         renderThread
         repr
         resource
         resourceRegistry
+        retainedDataSource
+        retainedSceneIndex
         rprim
         rprimCollection
         rprimSharedData
+        sampleFilterSchema
         sceneDelegate
         sceneExtCompInputSource
+        sceneIndex
+        sceneIndexAdapterSceneDelegate
+        sceneIndexObserver
+        sceneIndexPlugin
+        sceneIndexPluginRegistry
+        schema
         selection
+        selectionSchema
+        selectionsSchema
         smoothNormals
-        sortedIds                   
+        sortedIds
+        sphereSchema
         sprim
         strategyBase
+        subdivisionTagsSchema
+        systemSchema
         task
         timeSampleArray
         tokens
@@ -94,17 +169,23 @@ pxr_library(hd
         unitTestHelper
         unitTestNullRenderDelegate
         unitTestNullRenderPass
+        vectorSchema
         vertexAdjacency
-	volume
+        visibilitySchema
+        volume
+        volumeFieldBindingSchema
+        volumeFieldSchema
         vtBufferSource
+        xformSchema
 
     PUBLIC_HEADERS
         api.h
+        dataSourceTypeDefs.h
         driver.h
+        materialNetworkInterface.h
         version.h
 
     PRIVATE_CLASSES
-        extComputationContextInternal
         ${optionalPrivateClasses}
 
     RESOURCE_FILES
@@ -114,14 +195,222 @@ pxr_library(hd
         overview.dox
 )
 
-pxr_build_test(testHdExtComputationUtils
-    LIBRARIES
-        hd
+pxr_build_test(testHdBufferSourceEmptyVal
+   LIBRARIES
+       hd
+       vt
+       gf
+       tf
+       arch
 
-    CPPFILES
-        testenv/testHdExtComputationUtils.cpp
+   CPPFILES
+       testenv/testHdBufferSourceEmptyVal.cpp
+)
+
+pxr_build_test(testHdBufferSpec
+   LIBRARIES
+       hd
+
+   CPPFILES
+       testenv/testHdBufferSpec.cpp
+)
+
+# Removing test from build while we modernize the Hydra architecture.
+# pxr_build_test(testHdChangeTracker
+#    LIBRARIES
+#        hd
+
+#    CPPFILES
+#        testenv/testHdChangeTracker.cpp
+# )
+
+pxr_build_test(testHdCommand
+   LIBRARIES
+       hd
+
+   CPPFILES
+       testenv/testHdCommand.cpp
+)
+
+pxr_build_test(testHdDataSourceLocator
+   LIBRARIES
+       hd
+
+   CPPFILES
+       testenv/testHdDataSourceLocator.cpp
+)
+
+pxr_build_test(testHdDirtyBitsTranslator
+   LIBRARIES
+       hd
+       tf
+
+   CPPFILES
+       testenv/testHdDirtyBitsTranslator.cpp
+)
+
+pxr_build_test(testHdDirtyList
+   LIBRARIES
+       hd
+       tf
+
+   CPPFILES
+       testenv/testHdDirtyList.cpp
+)
+
+pxr_build_test(testHdExtCompDependencySort
+   LIBRARIES
+       hd
+       sdf
+       tf
+
+   CPPFILES
+       testenv/testHdExtCompDependencySort.cpp
+)
+
+pxr_build_test(testHdExtComputationUtils
+   LIBRARIES
+       hd
+
+   CPPFILES
+       testenv/testHdExtComputationUtils.cpp
+)
+
+pxr_build_test(testHdPerfLog
+   LIBRARIES
+       hd
+       sdf
+       tf
+       arch
+
+   CPPFILES
+       testenv/testHdPerfLog.cpp
+)
+
+# Removing test from build while we modernize the Hydra architecture.
+# pxr_build_test(testHdRenderIndex
+#    LIBRARIES
+#        hd
+
+#    CPPFILES
+#        testenv/testHdRenderIndex.cpp
+# )
+
+pxr_build_test(testHdDataSource
+   LIBRARIES
+       hd
+       sdf
+       tf
+
+   CPPFILES
+       testenv/testHdDataSource.cpp
+)
+
+pxr_build_test(testHdSceneIndex
+   LIBRARIES
+       hd
+       sdf
+       tf
+
+   CPPFILES
+       testenv/testHdSceneIndex.cpp
+)
+
+pxr_build_test(testHdSortedIds
+   LIBRARIES
+       hd
+       sdf
+       tf
+
+   CPPFILES
+       testenv/testHdSortedIds.cpp
+)
+
+pxr_build_test(testHdTimeSampleArray
+   LIBRARIES
+       hd
+
+   CPPFILES
+       testenv/testHdTimeSampleArray.cpp
+)
+
+pxr_build_test(testHdTypes
+   LIBRARIES
+       hd
+
+   CPPFILES
+       testenv/testHdTypes.cpp
+)
+
+
+pxr_install_test_dir(
+    SRC testenv/testHdSortedIds
+    DEST testHdSortedIds
+)
+
+
+pxr_register_test(testHdBufferSourceEmptyVal
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdBufferSourceEmptyVal"
+)
+
+pxr_register_test(testHdBufferSpec
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdBufferSpec"
+)
+
+# pxr_register_test(testHdChangeTracker
+#     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdChangeTracker"
+# )
+
+pxr_register_test(testHdCommand
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdCommand"
+)
+
+pxr_register_test(testHdDataSourceLocator
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdDataSourceLocator"
+)
+
+pxr_register_test(testHdDirtyBitsTranslator
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdDirtyBitsTranslator"
+)
+
+pxr_register_test(testHdDirtyList
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdDirtyList"
+)
+
+pxr_register_test(testHdExtCompDependencySort
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdExtCompDependencySort"
 )
 
 pxr_register_test(testHdExtComputationUtils
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdExtComputationUtils"
+)
+
+pxr_register_test(testHdPerfLog
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdPerfLog"
+)
+
+# pxr_register_test(testHdRenderIndex
+#     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdRenderIndex"
+# )
+
+pxr_register_test(testHdDataSource
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdDataSource"
+)
+
+pxr_register_test(testHdSceneIndex
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdSceneIndex"
+)
+
+pxr_register_test(testHdSortedIds
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdSortedIds"
+    # XXX Disabling compare for now. testHdSortedId_removeTest.txt differs on Mac and Windows.
+    # DIFF_COMPARE testHdSortedId_populateTest.txt testHdSortedId_singleInsertTest.txt testHdSortedId_multiInsertTest.txt testHdSortedId_removeTest.txt testHdSortedId_removeOnlyElementTest.txt testHdSortedId_removeRangeTest.txt testHdSortedId_removeBatchTest.txt testHdSortedId_removeSortedTest.txt testHdSortedId_removeUnsortedTest.txt testHdSortedId_removeAfterInsertNoSyncTest.txt
+)
+
+pxr_register_test(testHdTimeSampleArray
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdTimeSampleArray"
+)
+
+pxr_register_test(testHdTypes
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testHdTypes"
 )

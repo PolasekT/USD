@@ -57,9 +57,11 @@ class UsdPrimRange;
 class Usd_PrimData;
 
 class UsdAttribute;
+class UsdEditTarget;
 class UsdRelationship;
 class UsdPayloads;
 class UsdReferences;
+class UsdResolveTarget;
 class UsdSchemaBase;
 class UsdAPISchemaBase;
 class UsdInherits;
@@ -147,7 +149,9 @@ public:
     /// API schemas, and any fallback types defined on the stage for 
     /// unrecognized prim type names. The returned type structure contains the 
     /// "true" schema type used to create this prim's prim definition and answer
-    /// the IsA query. This value is cached and efficient to query.
+    /// the IsA query. This value is cached and efficient to query. The cached
+    /// values are guaranteed to exist for (at least) as long as the prim's
+    /// stage is open.
     /// \sa GetTypeName
     /// \sa GetAppliedSchemas
     /// \sa \ref Usd_OM_FallbackPrimTypes
@@ -180,6 +184,22 @@ public:
     /// opinion wins" semantics.
     USD_API
     SdfPrimSpecHandleVector GetPrimStack() const;
+
+    /// Return all the authored SdfPrimSpecs that may contain opinions for this
+    /// prim in order from strong to weak paired with the cumulative layer 
+    /// offset from the stage's root layer to the layer containing the prim 
+    /// spec.
+    ///
+    /// This behaves exactly the same as UsdPrim::GetPrimStack with the 
+    /// addition of providing the cumulative layer offset of each spec's layer.
+    ///
+    /// \note Use this method for debugging and diagnostic purposes.  It is
+    /// **not** advisable to retain a PrimStack for expedited metadata value
+    /// resolution, since not all metadata resolves with simple "strongest
+    /// opinion wins" semantics.
+    USD_API
+    std::vector<std::pair<SdfPrimSpecHandle, SdfLayerOffset>> 
+    GetPrimStackWithLayerOffsets() const;
 
     /// Author an opinion for this Prim's specifier at the current edit
     /// target.
@@ -470,131 +490,547 @@ public:
     bool HasProperty(const TfToken &propName) const;
 
 private:
-    // The non-templated implementation of UsdPrim::IsA using the
-    // TfType system. \p validateSchemaType is provided for python clients
-    // because they can't use compile time assertions on the input type.
-    USD_API
-    bool _IsA(const TfType& schemaType, bool validateSchemaType) const;
+    // Templated helper functions for the public schema query and API schema
+    // authoring functions. The public functions have overloads that take 
+    // a type, an identifier, or a family and version and these helpers handle
+    // all three of these types of input.
+    template<class... SchemaArgs>
+    bool _IsA(
+        const SchemaArgs & ...schemaArgs) const;
 
-    // The non-templated implementation of UsdPrim::HasAPI using the
-    // TfType system. 
-    // 
-    // \p validateSchemaType is provided for python clients
-    // because they can't use compile time assertions on the input type.
-    // 
-    // \p instanceName is used to determine whether a particular instance 
-    // of a multiple-apply API schema has been applied to the prim.
-    USD_API
-    bool _HasAPI(const TfType& schemaType, bool validateSchemaType,
-                 const TfToken &instanceName) const;
+    template<class... SchemaArgs>
+    bool _HasAPI(
+        const SchemaArgs & ...schemaArgs) const;
 
-    // Private implementation for all ApplyAPI methods. This does no input
-    // validation as the public methods are expected to have already done either
-    // compile time or runtime validation already.
-    USD_API
-    bool _ApplyAPI(const TfType& schemaType,
-                   const TfToken& instanceName = TfToken()) const;
+    template<class... SchemaArgs>
+    bool _HasAPIInstance(
+        const TfToken &instanceName, 
+        const SchemaArgs & ...schemaArgs) const;
 
-    // Private implementation for all RemoveAPI methods. This does no input
-    // validation as the public methods are expected to have already done either
-    // compile time or runtime validation already.
-    USD_API
-    bool _RemoveAPI(const TfType& schemaType,
-                    const TfToken& instanceName = TfToken()) const;
+    template <class... SchemaArgs>
+    bool _CanApplySingleApplyAPI(
+        std::string *whyNot, 
+        const SchemaArgs &... schemaArgs) const;
+
+    template <class... SchemaArgs>
+    bool _CanApplyMultipleApplyAPI(
+        const TfToken& instanceName, 
+        std::string *whyNot, 
+        const SchemaArgs &... schemaArgs) const;
+
+    template <class... SchemaArgs>
+    bool _ApplySingleApplyAPI(
+        const SchemaArgs &... schemaArgs) const;
+
+    template <class... SchemaArgs>
+    bool _ApplyMultipleApplyAPI(
+        const TfToken &instanceName, 
+        const SchemaArgs &... schemaArgs) const;
+
+    template <class... SchemaArgs>
+    bool _RemoveSingleApplyAPI(
+        const SchemaArgs &... schemaArgs) const;
+
+    template <class... SchemaArgs>
+    bool _RemoveMultipleApplyAPI(
+        const TfToken &instanceName, 
+        const SchemaArgs &... schemaArgs) const;
 
 public:
-    /// Return true if the prim's schema type, is or inherits schema type T.
+    /// \name IsA
+    ///
+    /// @{
+
+    /// Return true if the prim's schema type, is or inherits from the TfType
+    /// of the schema class type \p SchemaType.
+    ///
     /// \sa GetPrimTypeInfo 
     /// \sa UsdPrimTypeInfo::GetSchemaType
     /// \sa \ref Usd_OM_FallbackPrimTypes
-    template <typename T>
+    template <typename SchemaType>
     bool IsA() const {
-        static_assert(std::is_base_of<UsdSchemaBase, T>::value,
+        static_assert(std::is_base_of<UsdSchemaBase, SchemaType>::value,
                       "Provided type must derive UsdSchemaBase.");
-        return _IsA(TfType::Find<T>(), /*validateSchemaType=*/false);
+        return IsA(TfType::Find<SchemaType>());
     };
-    
-    /// Return true if the prim's schema type is or inherits \p schemaType.
-    /// \sa GetPrimTypeInfo 
-    /// \sa UsdPrimTypeInfo::GetSchemaType
-    /// \sa \ref Usd_OM_FallbackPrimTypes
+
+    /// This is an overload of \ref IsA that takes a TfType \p schemaType . 
     USD_API
     bool IsA(const TfType& schemaType) const;
 
-    /// Return true if the UsdPrim has had an API schema represented by the C++ 
-    /// class type <b>T</b> applied to it through the Apply() method provided 
-    /// on the API schema class. 
-    /// 
-    /// \p instanceName, if non-empty is used to determine if a particular 
-    /// instance of a multiple-apply API schema (eg. UsdCollectionAPI) has been 
-    /// applied to the prim. A coding error is issued if a non-empty 
-    /// \p instanceName is passed in and <b>T</b> represents a single-apply API 
-    /// schema.
-    /// 
-    /// <b>Using HasAPI in C++</b>
+    /// This is an overload of \ref IsA that takes a \p schemaIdentifier to 
+    /// determine the schema type. 
+    USD_API
+    bool IsA(const TfToken& schemaIdentifier) const;
+
+    /// This is an overload of \ref IsA that takes a \p schemaFamily and 
+    /// \p schemaVersion to determine the schema type. 
+    USD_API
+    bool IsA(const TfToken& schemaFamily,
+             UsdSchemaVersion schemaVersion) const;
+
+    /// @}
+
+    /// \name IsInFamily
+    ///
+    /// @{
+
+    /// Return true if the prim's schema type is or inherits from the schema 
+    /// type of any version of the schemas in the given \p schemaFamily.
+    USD_API
+    bool IsInFamily(const TfToken &schemaFamily) const;
+
+    /// Return true if the prim's schema type, is or inherits from the schema 
+    /// type of any schema in the given \p schemaFamily that matches the version
+    /// filter provided by \p schemaVersion and \p versionPolicy.
+    USD_API
+    bool IsInFamily(
+        const TfToken &schemaFamily,
+        UsdSchemaVersion schemaVersion,
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const;
+
+    /// Overload for convenience of 
+    /// \ref IsInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "IsInFamily"
+    /// that finds a registered schema for the C++ schema class \p SchemaType 
+    /// and uses that schema's family and version.
+    template <typename SchemaType>
+    bool IsInFamily(
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const {
+        static_assert(std::is_base_of<UsdSchemaBase, SchemaType>::value,
+                      "Provided type must derive UsdSchemaBase.");
+        return IsInFamily(TfType::Find<SchemaType>(), versionPolicy);
+    };
+
+    /// Overload for convenience of 
+    /// \ref IsInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "IsInFamily"
+    /// that finds a registered schema for the given \p schemaType and uses that
+    /// schema's family and version.
+    USD_API
+    bool IsInFamily(
+        const TfType &schemaType,
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const;
+
+    /// Overload for convenience of 
+    /// \ref IsInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "IsInFamily"
+    /// that parses the schema family and version to use from the given 
+    /// \p schemaIdentifier.
+    ///
+    /// Note that the schema identifier is not required to be a registered
+    /// schema as it only parsed to get what its family and version would be 
+    /// See UsdSchemaRegistry::ParseSchemaFamilyAndVersionFromIdentifier.
+    USD_API
+    bool IsInFamily(
+        const TfToken &schemaIdentifier,
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const;
+
+    /// Return true if the prim's schema type, is or inherits from the schema 
+    /// type of any version the schema in the given \p schemaFamily and if so,
+    /// populates \p schemaVersion with the version of the schema that this 
+    /// prim \ref IsA.
+    USD_API
+    bool GetVersionIfIsInFamily(
+        const TfToken &schemaFamily,
+        UsdSchemaVersion *schemaVersion) const;
+
+    /// @}
+
+    /// \name HasAPI
+    ///
+    /// __Using HasAPI in C++__
     /// \code 
     /// UsdPrim prim = stage->OverridePrim("/path/to/prim");
     /// MyDomainBozAPI = MyDomainBozAPI::Apply(prim);
     /// assert(prim.HasAPI<MyDomainBozAPI>());
+    /// assert(prim.HasAPI(TfToken("BozAPI")));
+    /// assert(prim.HasAPI(TfToken("BozAPI"), /*schemaVersion*/ 0));
     /// 
     /// UsdCollectionAPI collAPI = UsdCollectionAPI::Apply(prim, 
-    ///         /*instanceName*/ TfToken("geom"))
-    /// assert(prim.HasAPI<UsdCollectionAPI>()
+    ///         /*instanceName*/ TfToken("geom"));
+    /// assert(prim.HasAPI<UsdCollectionAPI>();
+    /// assert(prim.HasAPI(TfToken("CollectionAPI"));
+    /// assert(prim.HasAPI(TfToken("CollectionAPI"), /*schemaVersion*/ 0);
+    ///
     /// assert(prim.HasAPI<UsdCollectionAPI>(/*instanceName*/ TfToken("geom")))
+    /// assert(prim.HasAPI(TfToken("CollectionAPI", 
+    ///                    /*instanceName*/ TfToken("geom")));
+    /// assert(prim.HasAPI(TfToken("CollectionAPI"), /*schemaVersion*/ 0, 
+    ///                    /*instanceName*/ TfToken("geom"));
     /// \endcode
     /// 
     /// The python version of this method takes as an argument the TfType
-    /// of the API schema class. Similar validation of the schema type is 
-    /// performed in python at run-time and a coding error is issued if 
-    /// the given type is not a valid applied API schema.
+    /// of the API schema class.
     /// 
-    /// <b>Using HasAPI in Python</b>
+    /// __Using HasAPI in Python__
     /// \code{.py}
     /// prim = stage.OverridePrim("/path/to/prim")
     /// bozAPI = MyDomain.BozAPI.Apply(prim)
-    /// assert prim.HasAPI(MyDomain.BozAPI)
+    /// assert(prim.HasAPI(MyDomain.BozAPI))
+    /// assert(prim.HasAPI("BozAPI"))
+    /// assert(prim.HasAPI("BozAPI", 0))
     /// 
     /// collAPI = Usd.CollectionAPI.Apply(prim, "geom")
     /// assert(prim.HasAPI(Usd.CollectionAPI))
+    /// assert(prim.HasAPI("CollectionAPI"))
+    /// assert(prim.HasAPI("CollectionAPI", 0))
+    ///
     /// assert(prim.HasAPI(Usd.CollectionAPI, instanceName="geom"))
+    /// assert(prim.HasAPI("CollectionAPI", instanceName="geom"))
+    /// assert(prim.HasAPI("CollectionAPI", 0, instanceName="geom"))
     /// \endcode
-    template <typename T>
-    bool HasAPI(const TfToken &instanceName=TfToken()) const {
-        static_assert(std::is_base_of<UsdAPISchemaBase, T>::value,
+    ///
+    /// @{
+
+    /// Return true if the UsdPrim has had an applied API schema represented by 
+    /// the C++ class type \p SchemaType applied to it. 
+    /// 
+    /// This function works for both single-apply and multiple-apply API schema
+    /// types. If the schema is a multiple-apply API schema this will return
+    /// true if any instance of the multiple-apply API has been applied.
+    template <typename SchemaType>
+    bool
+    HasAPI() const {
+        static_assert(std::is_base_of<UsdAPISchemaBase, SchemaType>::value,
                       "Provided type must derive UsdAPISchemaBase.");
-        static_assert(!std::is_same<UsdAPISchemaBase, T>::value,
+        static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
                       "Provided type must not be UsdAPISchemaBase.");
         static_assert(
-            (T::schemaType == UsdSchemaKind::SingleApplyAPI
-            || T::schemaType == UsdSchemaKind::MultipleApplyAPI),
+            SchemaType::schemaKind == UsdSchemaKind::SingleApplyAPI ||
+            SchemaType::schemaKind == UsdSchemaKind::MultipleApplyAPI,
             "Provided schema type must be an applied API schema.");
 
-        if (T::schemaType != UsdSchemaKind::MultipleApplyAPI
-            && !instanceName.IsEmpty()) {
-            TF_CODING_ERROR("HasAPI: single application API schemas like %s do "
-                "not contain an application instanceName ( %s ).",
-                TfType::GetCanonicalTypeName(typeid(T)).c_str(),
-                instanceName.GetText());
-            return false;
-        }
-
-        return _HasAPI(TfType::Find<T>(), /*validateSchemaType=*/false, 
-                       instanceName);
+        return HasAPI(TfType::Find<SchemaType>());
     }
-    
-    /// Return true if a prim has an API schema with TfType \p schemaType.
-    ///
-    /// \p instanceName, if non-empty is used to determine if a particular 
-    /// instance of a multiple-apply API schema (eg. UsdCollectionAPI) has been 
-    /// applied to the prim. A coding error is issued if a non-empty 
-    /// \p instanceName is passed in and <b>T</b> represents a single-apply API 
-    /// schema.
+
+    /// Return true if the UsdPrim has the specific instance, \p instanceName,
+    /// of the multiple-apply API schema represented by the C++ class type 
+    /// \p SchemaType applied to it. 
+    /// 
+    /// \p instanceName must be non-empty, otherwise it is a coding error.
+    template <typename SchemaType>
+    bool
+    HasAPI(const TfToken &instanceName) const {
+        static_assert(std::is_base_of<UsdAPISchemaBase, SchemaType>::value,
+                      "Provided type must derive UsdAPISchemaBase.");
+        static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
+                      "Provided type must not be UsdAPISchemaBase.");
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::MultipleApplyAPI,
+            "Provided schema type must be a multi apply API schema.");
+
+        return HasAPI(TfType::Find<SchemaType>(), instanceName);
+    }
+
+    /// This is an overload of \ref HasAPI that takes a TfType \p schemaType . 
+    USD_API
+    bool HasAPI(const TfType& schemaType) const;
+
+    /// This is an overload of \ref HasAPI(const TfToken &) const "HasAPI" with
+    /// \p instanceName that takes a TfType \p schemaType . 
     USD_API
     bool HasAPI(const TfType& schemaType,
-                const TfToken& instanceName=TfToken()) const;
+                const TfToken& instanceName) const;
 
-    /// Applies a <b>single-apply</b> API schema with the given C++ type 
-    /// 'SchemaType' to this prim in the current edit target. 
+    /// This is an overload of \ref HasAPI that takes a \p schemaIdentifier to 
+    /// determine the schema type. 
+    USD_API
+    bool HasAPI(const TfToken& schemaIdentifier) const;
+
+    /// This is an overload of \ref HasAPI(const TfToken &) const "HasAPI" with
+    /// \p instanceName that takes a \p schemaIdentifier to determine the schema
+    /// type. 
+    USD_API
+    bool HasAPI(const TfToken& schemaIdentifier,
+                const TfToken& instanceName) const;
+
+    /// This is an overload of \ref HasAPI that takes a \p schemaFamily and 
+    /// \p schemaVersion to determine the schema type. 
+    USD_API
+    bool HasAPI(const TfToken& schemaFamily,
+                UsdSchemaVersion schemaVersion) const;
+
+    /// This is an overload of \ref HasAPI(const TfToken &) const "HasAPI" with
+    /// \p instanceName that takes a \p schemaFamily and \p schemaVersion to 
+    /// determine the schema type. 
+    USD_API
+    bool HasAPI(const TfToken& schemaFamily,
+                UsdSchemaVersion schemaVersion,
+                const TfToken& instanceName) const;
+
+    /// @}
+
+    /// \name HasAPIInFamily
+    ///
+    /// @{
+
+    /// Return true if the prim has an applied API schema that is any version of 
+    /// the schemas in the given \p schemaFamily.
+    /// 
+    /// This function will consider both single-apply and multiple-apply API 
+    /// schemas in the schema family. For the multiple-apply API schemas, this
+    /// will return true if any instance of one of the schemas has been applied.
+    USD_API
+    bool HasAPIInFamily(
+        const TfToken &schemaFamily) const;
+
+    /// Return true if the prim has a specific instance \p instanceName of an
+    /// applied multiple-apply API schema that is any version the schemas in
+    /// the given \p schemaFamily.
+    /// 
+    /// \p instanceName must be non-empty, otherwise it is a coding error.
+    USD_API
+    bool HasAPIInFamily(
+        const TfToken &schemaFamily,
+        const TfToken &instanceName) const;
+
+    /// Return true if the prim has an applied API schema that is a schema in  
+    /// the given \p schemaFamily that matches the version filter provided by 
+    /// \p schemaVersion and \p versionPolicy.
+    /// 
+    /// This function will consider both single-apply and multiple-apply API 
+    /// schemas in the schema family. For the multiple-apply API schemas, this
+    /// will return true if any instance of one of the filter-passing schemas
+    /// has been applied.
+    USD_API
+    bool HasAPIInFamily(
+        const TfToken &schemaFamily,
+        UsdSchemaVersion schemaVersion,
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const;
+
+    /// Return true if the prim has a specific instance \p instanceName of an 
+    /// applied multiple-apply API schema in the given \p schemaFamily that 
+    /// matches the version filter provided by \p schemaVersion and 
+    /// \p versionPolicy.
+    /// 
+    /// \p instanceName must be non-empty, otherwise it is a coding error.
+    USD_API
+    bool HasAPIInFamily(
+        const TfToken &schemaFamily,
+        UsdSchemaVersion schemaVersion,
+        UsdSchemaRegistry::VersionPolicy versionPolicy,
+        const TfToken &instanceName) const;
+
+    /// Overload for convenience of 
+    /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "HasAPIInFamily"
+    /// that finds a registered schema for the C++ schema class \p SchemaType 
+    /// and uses that schema's family and version.
+    template <typename SchemaType>
+    bool HasAPIInFamily(
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const {
+        static_assert(std::is_base_of<UsdSchemaBase, SchemaType>::value,
+                      "Provided type must derive UsdSchemaBase.");
+        return HasAPIInFamily(
+            TfType::Find<SchemaType>(), versionPolicy);
+    };
+
+    /// Overload for convenience of 
+    /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy, const TfToken &) const "HasAPIInFamily"
+    /// that finds a registered schema for the C++ schema class \p SchemaType 
+    /// and uses that schema's family and version.
+    template <typename SchemaType>
+    bool HasAPIInFamily(
+        UsdSchemaRegistry::VersionPolicy versionPolicy,
+        const TfToken &instanceName) const {
+        static_assert(std::is_base_of<UsdSchemaBase, SchemaType>::value,
+                      "Provided type must derive UsdSchemaBase.");
+        return HasAPIInFamily(
+            TfType::Find<SchemaType>(), versionPolicy, instanceName);
+    };
+
+    /// Overload for convenience of 
+    /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "HasAPIInFamily"
+    /// that finds a registered schema for the given \p schemaType and uses that
+    /// schema's family and version.
+    USD_API
+    bool HasAPIInFamily(
+        const TfType &schemaType,
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const;
+
+    /// Overload for convenience of 
+    /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy, const TfToken &) const "HasAPIInFamily"
+    /// that finds a registered schema for the given \p schemaType and uses that
+    /// schema's family and version.
+    USD_API
+    bool HasAPIInFamily(
+        const TfType &schemaType,
+        UsdSchemaRegistry::VersionPolicy versionPolicy,
+        const TfToken &instanceName) const;
+
+    /// Overload for convenience of 
+    /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy) const "HasAPIInFamily"
+    /// that parses the schema family and version to use from the given 
+    /// \p schemaIdentifier.
+    ///
+    /// Note that the schema identifier is not required to be a registered
+    /// schema as it only parsed to get what its family and version would be 
+    /// See UsdSchemaRegistry::ParseSchemaFamilyAndVersionFromIdentifier.
+    USD_API
+    bool HasAPIInFamily(
+        const TfToken &schemaIdentifier,
+        UsdSchemaRegistry::VersionPolicy versionPolicy) const;
+
+    /// Overload for convenience of 
+    /// \ref HasAPIInFamily(const TfToken&, UsdSchemaVersion, UsdSchemaRegistry::VersionPolicy, const TfToken &) const "HasAPIInFamily"
+    /// that parses the schema family and version to use from the given 
+    /// \p schemaIdentifier.
+    ///
+    /// Note that the schema identifier is not required to be a registered
+    /// schema as it only parsed to get what its family and version would be 
+    /// See UsdSchemaRegistry::ParseSchemaFamilyAndVersionFromIdentifier.
+    USD_API
+    bool HasAPIInFamily(
+        const TfToken &schemaIdentifier,
+        UsdSchemaRegistry::VersionPolicy versionPolicy,
+        const TfToken &instanceName) const;
+
+    /// Return true if the prim has an applied API schema that is any version 
+    /// the schemas in the given \p schemaFamily and if so, populates 
+    /// \p schemaVersion with the version of the schema that this prim 
+    /// \ref HasAPI.
+    ///
+    /// This function will consider both single-apply and multiple-apply API 
+    /// schemas in the schema family. For the multiple-apply API schemas is a 
+    /// this will return true if any instance of one of the schemas has been 
+    /// applied.
+    ///
+    /// Note that if more than one version of the schemas in \p schemaFamily
+    /// are applied to this prim, the highest version number of these schemas 
+    /// will be populated in \p schemaVersion.
+    USD_API
+    bool
+    GetVersionIfHasAPIInFamily(
+        const TfToken &schemaFamily,
+        UsdSchemaVersion *schemaVersion) const;
+
+    /// Return true if the prim has a specific instance \p instanceName of an
+    /// applied multiple-apply API schema that is any version the schemas in
+    /// the given \p schemaFamily and if so, populates \p schemaVersion with the
+    /// version of the schema that this prim 
+    /// \ref HasAPI(const TfToken &) const "HasAPI".
+    ///
+    /// \p instanceName must be non-empty, otherwise it is a coding error.
+    ///
+    /// Note that if more than one version of the schemas in \p schemaFamily
+    /// is multiple-apply and applied to this prim with the given 
+    /// \p instanceName, the highest version number of these schemas will be 
+    /// populated in \p schemaVersion.
+    USD_API
+    bool
+    GetVersionIfHasAPIInFamily(
+        const TfToken &schemaFamily,
+        const TfToken &instanceName,
+        UsdSchemaVersion *schemaVersion) const;
+
+    /// @}
+
+    /// \name CanApplyAPI
+    ///
+    /// @{
+
+    /// Returns whether a __single-apply__ API schema with the given C++ type 
+    /// \p SchemaType can be applied to this prim. If the return value is false, 
+    /// and \p whyNot is provided, the reason the schema cannot be applied is 
+    /// written to whyNot.
+    /// 
+    /// Whether the schema can be applied is determined by the schema type 
+    /// definition which may specify that the API schema can only be applied to
+    /// certain prim types.
+    /// 
+    /// The return value of this function only indicates whether it would be 
+    /// valid to apply this schema to the prim. It has no bearing on whether
+    /// calling ApplyAPI will be successful or not.
+    template <typename SchemaType>
+    bool CanApplyAPI(std::string *whyNot = nullptr) const {
+        static_assert(std::is_base_of<UsdAPISchemaBase, SchemaType>::value,
+            "Provided type must derive UsdAPISchemaBase.");
+        static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
+            "Provided type must not be UsdAPISchemaBase.");
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::SingleApplyAPI,
+            "Provided schema type must be a single apply API schema.");
+
+        static const TfType schemaType = TfType::Find<SchemaType>();
+        return CanApplyAPI(schemaType, whyNot);
+    }
+
+    /// Returns whether a __multiple-apply__ API schema with the given C++ 
+    /// type \p SchemaType can be applied to this prim with the given 
+    /// \p instanceName. If the return value is false, and \p whyNot is 
+    /// provided, the reason the schema cannot be applied is written to whyNot.
+    /// 
+    /// Whether the schema can be applied is determined by the schema type 
+    /// definition which may specify that the API schema can only be applied to 
+    /// certain prim types. It also determines whether the instance name is a 
+    /// valid instance name for the multiple apply schema.
+    /// 
+    /// The return value of this function only indicates whether it would be 
+    /// valid to apply this schema to the prim. It has no bearing on whether
+    /// calling ApplyAPI will be successful or not.
+    template <typename SchemaType>
+    bool CanApplyAPI(const TfToken &instanceName, 
+                     std::string *whyNot = nullptr) const {
+        static_assert(std::is_base_of<UsdAPISchemaBase, SchemaType>::value,
+            "Provided type must derive UsdAPISchemaBase.");
+        static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
+            "Provided type must not be UsdAPISchemaBase.");
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::MultipleApplyAPI,
+            "Provided schema type must be a multiple apply API schema.");
+
+        static const TfType schemaType = TfType::Find<SchemaType>();
+        return CanApplyAPI(schemaType, instanceName, whyNot);
+    }
+
+    /// This is an overload of \ref CanApplyAPI that takes a TfType 
+    /// \p schemaType . 
+    USD_API
+    bool CanApplyAPI(const TfType& schemaType,
+                     std::string *whyNot = nullptr) const;
+
+    /// This is an overload of 
+    /// \ref CanApplyAPI(const TfToken &, std::string *) const "CanApplyAPI" 
+    /// with \p instanceName that takes a TfType \p schemaType . 
+    USD_API
+    bool CanApplyAPI(const TfType& schemaType,
+                     const TfToken& instanceName,
+                     std::string *whyNot = nullptr) const;
+
+    /// This is an overload of \ref CanApplyAPI that takes a \p schemaIdentifier
+    /// to determine the schema type. 
+    USD_API
+    bool CanApplyAPI(const TfToken& schemaIdentifier,
+                     std::string *whyNot = nullptr) const;
+
+    /// This is an overload of 
+    /// \ref CanApplyAPI(const TfToken &, std::string *) const "CanApplyAPI" 
+    /// with \p instanceName that takes a \p schemaIdentifier to determine the
+    /// schema type. 
+    USD_API
+    bool CanApplyAPI(const TfToken& schemaIdentifier,
+                     const TfToken& instanceName,
+                     std::string *whyNot = nullptr) const;
+
+    /// This is an overload of \ref CanApplyAPI that takes a \p schemaFamily and 
+    /// \p schemaVersion to determine the schema type. 
+    USD_API
+    bool CanApplyAPI(const TfToken& schemaFamily,
+                     UsdSchemaVersion schemaVersion,
+                     std::string *whyNot = nullptr) const;
+
+    /// This is an overload of 
+    /// \ref CanApplyAPI(const TfToken &, std::string *) const "CanApplyAPI" 
+    /// with \p instanceName that takes a \p schemaFamily and \p schemaVersion 
+    /// to determine the schema type. 
+    USD_API
+    bool CanApplyAPI(const TfToken& schemaFamily,
+                     UsdSchemaVersion schemaVersion,
+                     const TfToken& instanceName,
+                     std::string *whyNot = nullptr) const;
+
+    /// @}
+
+    /// \name ApplyAPI
+    ///
+    /// @{
+
+    /// Applies a __single-apply__ API schema with the given C++ type 
+    /// \p SchemaType to this prim in the current edit target. 
     /// 
     /// This information is stored by adding the API schema's name token to the 
     /// token-valued, listOp metadata \em apiSchemas on this prim.
@@ -614,15 +1050,15 @@ public:
             "Provided type must derive UsdAPISchemaBase.");
         static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
             "Provided type must not be UsdAPISchemaBase.");
-        static_assert(SchemaType::schemaType == UsdSchemaKind::SingleApplyAPI,
-            "Provided schema type must be an single apply API schema.");
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::SingleApplyAPI,
+            "Provided schema type must be a single apply API schema.");
 
-        static TfType schemaType = TfType::Find<SchemaType>();
-        return _ApplyAPI(schemaType);
+        static const TfType schemaType = TfType::Find<SchemaType>();
+        return ApplyAPI(schemaType);
     }
 
-    /// Applies a </b>multiple-apply</b> API schema with the given C++ type 
-    /// 'SchemaType' and instance name \p instanceName to this prim in the 
+    /// Applies a __multiple-apply__ API schema with the given C++ type 
+    /// \p SchemaType and instance name \p instanceName to this prim in the 
     /// current edit target. 
     /// 
     /// This information is stored in the token-valued, listOp metadata
@@ -647,40 +1083,57 @@ public:
             "Provided type must derive UsdAPISchemaBase.");
         static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
             "Provided type must not be UsdAPISchemaBase.");
-        static_assert(SchemaType::schemaType == UsdSchemaKind::MultipleApplyAPI,
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::MultipleApplyAPI,
             "Provided schema type must be a multiple apply API schema.");
 
-        if (instanceName.IsEmpty()) {
-            TF_CODING_ERROR("ApplyAPI: for mutiple apply API schema %s, a "
-                            "non-empty instance name must be provided.",
-                TfType::GetCanonicalTypeName(typeid(SchemaType)).c_str());
-            return false;
-        }
-
-        static TfType schemaType = TfType::Find<SchemaType>();
-        return _ApplyAPI(schemaType, instanceName);
+        static const TfType schemaType = TfType::Find<SchemaType>();
+        return ApplyAPI(schemaType, instanceName);
     }
 
-    /// Applies an API schema with the given TfType \p schemaType on this prim
-    /// in the current edit target.
-    /// 
-    /// The \p schemaType must be an applied API schema type. If the 
-    /// \p schemaType is a multiple-apply schema, \p instanceName must
-    /// be non-empty while for single-apply schema, \p instanceName must be
-    /// empty. A error is issued and false returned if these conditions are
-    /// not met.
-    ///
-    /// This function behaves exactly like the templated ApplyAPI functions 
-    /// except for the runtime schemaType validation which happens at compile 
-    /// time for the templated functions. This method is provided for python 
-    /// clients. Use of the templated ApplyAPI is preferred.
+    /// This is an overload of \ref ApplyAPI that takes a TfType \p schemaType . 
+    USD_API
+    bool ApplyAPI(const TfType& schemaType) const;
+
+    /// This is an overload of \ref ApplyAPI(const TfToken &) const "ApplyAPI" 
+    /// with \p instanceName that takes a TfType \p schemaType . 
     USD_API
     bool ApplyAPI(const TfType& schemaType,
-                  const TfToken& instanceName=TfToken()) const;
+                  const TfToken& instanceName) const;
 
+    /// This is an overload of \ref ApplyAPI that takes a \p schemaIdentifier
+    /// to determine the schema type. 
+    USD_API
+    bool ApplyAPI(const TfToken& schemaIdentifier) const;
 
-    /// Removes a <b>single-apply</b> API schema with the given C++ type 
-    /// 'SchemaType' from this prim in the current edit target. 
+    /// This is an overload of \ref ApplyAPI(const TfToken &) const "ApplyAPI" 
+    /// with \p instanceName that takes a \p schemaIdentifier to determine the
+    /// schema type. 
+    USD_API
+    bool ApplyAPI(const TfToken& schemaIdentifier,
+                  const TfToken& instanceName) const;
+
+    /// This is an overload of \ref ApplyAPI that takes a \p schemaFamily and 
+    /// \p schemaVersion to determine the schema type. 
+    USD_API
+    bool ApplyAPI(const TfToken& schemaFamily,
+                  UsdSchemaVersion schemaVersion) const;
+
+    /// This is an overload of \ref ApplyAPI(const TfToken &) const "ApplyAPI" 
+    /// with \p instanceName that takes a \p schemaFamily and \p schemaVersion 
+    /// to determine the schema type. 
+    USD_API
+    bool ApplyAPI(const TfToken& schemaFamily,
+                  UsdSchemaVersion schemaVersion,
+                  const TfToken& instanceName) const;
+
+    /// @}
+
+    /// \name RemoveAPI
+    ///
+    /// @{
+
+    /// Removes a __single-apply__ API schema with the given C++ type 
+    /// \p SchemaType from this prim in the current edit target. 
     /// 
     /// This is done by removing the API schema's name token from the 
     /// token-valued, listOp metadata \em apiSchemas on this prim as well as 
@@ -701,14 +1154,14 @@ public:
             "Provided type must derive UsdAPISchemaBase.");
         static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
             "Provided type must not be UsdAPISchemaBase.");
-        static_assert(SchemaType::schemaType == UsdSchemaKind::SingleApplyAPI,
-            "Provided schema type must be an single apply API schema.");
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::SingleApplyAPI,
+            "Provided schema type must be a single apply API schema.");
 
-        static TfType schemaType = TfType::Find<SchemaType>();
-        return _RemoveAPI(schemaType);
+        static const TfType schemaType = TfType::Find<SchemaType>();
+        return RemoveAPI(schemaType);
     }
 
-    /// Removes a </b>multiple-apply</b> API schema with the given C++ type 
+    /// Removes a __multiple-apply__ API schema with the given C++ type 
     /// 'SchemaType' and instance name \p instanceName from this prim in the 
     /// current edit target. 
     /// 
@@ -735,29 +1188,50 @@ public:
             "Provided type must derive UsdAPISchemaBase.");
         static_assert(!std::is_same<UsdAPISchemaBase, SchemaType>::value,
             "Provided type must not be UsdAPISchemaBase.");
-        static_assert(SchemaType::schemaType == UsdSchemaKind::MultipleApplyAPI,
+        static_assert(SchemaType::schemaKind == UsdSchemaKind::MultipleApplyAPI,
             "Provided schema type must be a multiple apply API schema.");
 
-        static TfType schemaType = TfType::Find<SchemaType>();
-        return _RemoveAPI(schemaType, instanceName);
+        static const TfType schemaType = TfType::Find<SchemaType>();
+        return RemoveAPI(schemaType, instanceName);
     }
 
-    /// Removes an API schema with the given TfType \p schemaType from this prim
-    /// in the current edit target.
-    /// 
-    /// The \p schemaType must be an applied API schema type. If the 
-    /// \p schemaType is a multiple-apply schema, \p instanceName must
-    /// be non-empty while for single-apply schema, \p instanceName must be
-    /// empty. A error is issued and false returned if these conditions are
-    /// not met.
-    ///
-    /// This function behaves exactly like the templated RemoveAPI functions 
-    /// except for the runtime schemaType validation which happens at compile 
-    /// time for the templated functions. This method is provided for python 
-    /// clients. Use of the templated RemoveAPI is preferred.
+    /// This is an overload of \ref RemoveAPI that takes a TfType \p schemaType . 
+    USD_API
+    bool RemoveAPI(const TfType& schemaType) const;
+
+    /// This is an overload of \ref RemoveAPI(const TfToken &) const "RemoveAPI" 
+    /// with \p instanceName that takes a TfType \p schemaType . 
     USD_API
     bool RemoveAPI(const TfType& schemaType,
-                   const TfToken& instanceName=TfToken()) const;
+                  const TfToken& instanceName) const;
+
+    /// This is an overload of \ref RemoveAPI that takes a \p schemaIdentifier
+    /// to determine the schema type. 
+    USD_API
+    bool RemoveAPI(const TfToken& schemaIdentifier) const;
+
+    /// This is an overload of \ref RemoveAPI(const TfToken &) const "RemoveAPI" 
+    /// with \p instanceName that takes a \p schemaIdentifier to determine the
+    /// schema type. 
+    USD_API
+    bool RemoveAPI(const TfToken& schemaIdentifier,
+                  const TfToken& instanceName) const;
+
+    /// This is an overload of \ref RemoveAPI that takes a \p schemaFamily and 
+    /// \p schemaVersion to determine the schema type. 
+    USD_API
+    bool RemoveAPI(const TfToken& schemaFamily,
+                  UsdSchemaVersion schemaVersion) const;
+
+    /// This is an overload of \ref RemoveAPI(const TfToken &) const "RemoveAPI" 
+    /// with \p instanceName that takes a \p schemaFamily and \p schemaVersion 
+    /// to determine the schema type. 
+    USD_API
+    bool RemoveAPI(const TfToken& schemaFamily,
+                  UsdSchemaVersion schemaVersion,
+                  const TfToken& instanceName) const;
+
+    /// @}
 
     /// Adds the applied API schema name token \p appliedSchemaName to the 
     /// \em apiSchemas metadata for this prim at the current edit target. For
@@ -1319,9 +1793,10 @@ public:
     /// Return a UsdPayloads object that allows one to add, remove, or
     /// mutate payloads <em>at the currently set UsdEditTarget</em>.
     ///
-    /// There is currently no facility for \em listing the currently authored
-    /// payloads on a prim... the problem is somewhat ill-defined, and
-    /// requires some thought.
+    /// While the UsdPayloads object has no methods for \em listing the 
+    /// currently authored payloads on a prim, one can use a 
+    /// UsdPrimCompositionQuery to query the payload arcs that are composed 
+    /// by this prim.
     USD_API
     UsdPayloads GetPayloads() const;
 
@@ -1350,9 +1825,12 @@ public:
     /// Return a UsdReferences object that allows one to add, remove, or
     /// mutate references <em>at the currently set UsdEditTarget</em>.
     ///
-    /// There is currently no facility for \em listing the currently authored
-    /// references on a prim... the problem is somewhat ill-defined, and
-    /// requires some thought.
+    /// While the UsdReferences object has no methods for \em listing the 
+    /// currently authored references on a prim, one can use a 
+    /// UsdPrimCompositionQuery to query the reference arcs that are composed 
+    /// by this prim.
+    /// 
+    /// \sa UsdPrimCompositionQuery::GetDirectReferences
     USD_API
     UsdReferences GetReferences() const;
 
@@ -1367,9 +1845,12 @@ public:
     /// Return a UsdInherits object that allows one to add, remove, or
     /// mutate inherits <em>at the currently set UsdEditTarget</em>.
     ///
-    /// There is currently no facility for \em listing the currently authored
-    /// inherits on a prim... the problem is somewhat ill-defined, and
-    /// requires some thought.
+    /// While the UsdInherits object has no methods for \em listing the 
+    /// currently authored inherits on a prim, one can use a 
+    /// UsdPrimCompositionQuery to query the inherits arcs that are composed 
+    /// by this prim.
+    /// 
+    /// \sa UsdPrimCompositionQuery::GetDirectInherits
     USD_API
     UsdInherits GetInherits() const;
 
@@ -1384,9 +1865,10 @@ public:
     /// Return a UsdSpecializes object that allows one to add, remove, or
     /// mutate specializes <em>at the currently set UsdEditTarget</em>.
     ///
-    /// There is currently no facility for \em listing the currently authored
-    /// specializes on a prim... the problem is somewhat ill-defined, and
-    /// requires some thought.
+    /// While the UsdSpecializes object has no methods for \em listing the 
+    /// currently authored specializes on a prim, one can use a 
+    /// UsdPrimCompositionQuery to query the specializes arcs that are composed 
+    /// by this prim.
     USD_API
     UsdSpecializes GetSpecializes() const;
 
@@ -1491,53 +1973,6 @@ public:
         return UsdPrim();
     }
 
-    /// Return true if the given \p path identifies a prototype prim,
-    /// false otherwise.
-    ///
-    /// This function will return false for prim and property paths
-    /// that are descendants of a prototype prim path.
-    ///
-    /// \deprecated Use UsdPrim::IsPrototypePath instead
-    USD_API
-    static bool IsMasterPath(const SdfPath& path);
-
-    /// Return true if the given \p path identifies a prototype prim or
-    /// a prim or property descendant of a prototype prim, false otherwise.
-    ///
-    /// \deprecated Use UsdPrim::IsPathInPrototype instead
-    USD_API
-    static bool IsPathInMaster(const SdfPath& path);
-
-    /// Return true if this prim is an instancing prototype prim,
-    /// false otherwise.
-    ///
-    /// \deprecated Use UsdPrim::IsPrototype instead.
-    bool IsMaster() const { return IsPrototype(); }
-
-    /// Return true if this prim is a prototype prim or a descendant
-    /// of a prototype prim, false otherwise.
-    ///
-    /// \deprecated Use UsdPrim::IsInPrototype instead.
-    bool IsInMaster() const { 
-        return IsInPrototype();
-    }
-
-    /// If this prim is an instance, return the UsdPrim for the corresponding
-    /// prototype. Otherwise, return an invalid UsdPrim.
-    ///
-    /// \deprecated Use UsdPrim::GetPrototype instead.
-    USD_API
-    UsdPrim GetMaster() const;
-
-    /// If this prim is an instance proxy, return the UsdPrim for the
-    /// corresponding prim in the instance's prototype. Otherwise, return an
-    /// invalid UsdPrim.
-    ///
-    /// \deprecated Use UsdPrim::GetPrimInPrototype instead.
-    UsdPrim GetPrimInMaster() const {
-        return GetPrimInPrototype();
-    }
-
     /// If this prim is a prototype prim, returns all prims that are instances
     /// of this prototype. Otherwise, returns an empty vector.
     ///
@@ -1586,11 +2021,40 @@ public:
     /// generate a list of sites where clients could make edits to affect this 
     /// prim, or for debugging purposes.
     ///
+    /// For all prims in prototypes, including the prototype prim itself, this
+    /// is the expanded version of the prim index that was chosen to be shared
+    /// with all other instances. Thus, the prim index's path will not be the
+    /// same as the prim's path. Note that this behavior deviates slightly from
+    /// UsdPrim::GetPrimIndex which always returns an empty prim index for the
+    /// prototype prim itself.
+    ///
     /// This function may be relatively slow, since it will recompute the prim
     /// index on every call. Clients should prefer UsdPrim::GetPrimIndex unless 
     /// the additional site information is truly needed.
     USD_API
     PcpPrimIndex ComputeExpandedPrimIndex() const;
+
+    /// Creates and returns a resolve target that, when passed to a 
+    /// UsdAttributeQuery for one of this prim's attributes, causes value 
+    /// resolution to only consider weaker specs up to and including the spec 
+    /// that would be authored for this prim when using the given \p editTarget.
+    ///
+    /// If the edit target would not affect any specs that could contribute to
+    /// this prim, a null resolve target is returned.
+    USD_API
+    UsdResolveTarget MakeResolveTargetUpToEditTarget(
+        const UsdEditTarget &editTarget) const;
+
+    /// Creates and returns a resolve target that, when passed to a 
+    /// UsdAttributeQuery for one of this prim's attributes, causes value 
+    /// resolution to only consider specs that are stronger than the spec 
+    /// that would be authored for this prim when using the given \p editTarget.
+    ///
+    /// If the edit target would not affect any specs that could contribute to
+    /// this prim, a null resolve target is returned.
+    USD_API
+    UsdResolveTarget MakeResolveTargetStrongerThanEditTarget(
+        const UsdEditTarget &editTarget) const;
 
     /// @}
 
@@ -1663,6 +2127,13 @@ private:
     // for testing and debugging purposes.
     const PcpPrimIndex &_GetSourcePrimIndex() const
     { return _Prim()->GetSourcePrimIndex(); }
+
+    // Helper function for MakeResolveTargetUpToEditTarget and 
+    // MakeResolveTargetStrongerThanEditTarget.
+    UsdResolveTarget 
+    _MakeResolveTargetFromEditTarget(
+        const UsdEditTarget &editTarget,
+        bool makeAsStrongerThan) const;
 };
 
 #ifdef doxygen

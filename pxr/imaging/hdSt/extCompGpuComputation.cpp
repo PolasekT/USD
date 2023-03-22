@@ -23,7 +23,6 @@
 //
 #include "pxr/imaging/hdSt/bufferArrayRange.h"
 #include "pxr/imaging/hdSt/bufferResource.h"
-#include "pxr/imaging/hdSt/extCompGpuComputationBufferSource.h"
 #include "pxr/imaging/hdSt/extCompGpuPrimvarBufferSource.h"
 #include "pxr/imaging/hdSt/extCompGpuComputation.h"
 #include "pxr/imaging/hdSt/extComputation.h"
@@ -41,7 +40,6 @@
 #include "pxr/imaging/hgi/computePipeline.h"
 #include "pxr/imaging/hgi/shaderProgram.h"
 #include "pxr/imaging/hgi/tokens.h"
-#include "pxr/imaging/glf/diagnostic.h"
 #include "pxr/base/tf/hash.h"
 
 #include <limits>
@@ -52,12 +50,14 @@ static void
 _AppendResourceBindings(
     HgiResourceBindingsDesc* resourceDesc,
     HgiBufferHandle const& buffer,
-    uint32_t location)
+    uint32_t location,
+    bool writable)
 {
     HgiBufferBindDesc bufBind;
     bufBind.bindingIndex = location;
     bufBind.resourceType = HgiBindResourceTypeStorageBuffer;
     bufBind.stageUsage = HgiShaderStageCompute;
+    bufBind.writable = writable;
     bufBind.offsets.push_back(0);
     bufBind.buffers.push_back(buffer);
     resourceDesc->buffers.push_back(std::move(bufBind));
@@ -236,7 +236,8 @@ HdStExtCompGpuComputation::Execute(
                 TF_VERIFY(buffer->GetHandle())) {
                 _AppendResourceBindings(&resourceDesc,
                                         buffer->GetHandle(),
-                                        binding.GetLocation());
+                                        binding.GetLocation(),
+                                        /*writable=*/true);
             }
         }
 
@@ -254,7 +255,8 @@ HdStExtCompGpuComputation::Execute(
                 if (TF_VERIFY(binding.IsValid())) {
                     _AppendResourceBindings(&resourceDesc,
                                             buffer->GetHandle(),
-                                            binding.GetLocation());
+                                            binding.GetLocation(),
+                                            /*writable=*/false);
                 }
             }
         }
@@ -266,9 +268,9 @@ HdStExtCompGpuComputation::Execute(
         resourceBindingsInstance.SetValue(rb);
     }
 
-    HgiResourceBindingsSharedPtr const& resourceBindindsPtr =
+    HgiResourceBindingsSharedPtr const& resourceBindingsPtr =
         resourceBindingsInstance.GetValue();
-    HgiResourceBindingsHandle resourceBindings = *resourceBindindsPtr.get();
+    HgiResourceBindingsHandle resourceBindings = *resourceBindingsPtr.get();
 
     HgiComputeCmds* computeCmds = hdStResourceRegistry->GetGlobalComputeCmds();
 
@@ -366,20 +368,19 @@ HdStExtCompGpuComputation::CreateGpuComputation(
 
     // There is a companion resource that requires allocation
     // and resolution.
-    HdStExtCompGpuComputationResourceSharedPtr resource(
-            new HdStExtCompGpuComputationResource(
-                outputBufferSpecs,
-                shader,
-                inputs,
-                resourceRegistry));
+    HdStExtCompGpuComputationResourceSharedPtr resource =
+        std::make_shared<HdStExtCompGpuComputationResource>(
+            outputBufferSpecs,
+            shader,
+            inputs,
+            resourceRegistry);
 
-    return HdStExtCompGpuComputationSharedPtr(
-                new HdStExtCompGpuComputation(
-                        sourceComp->GetId(),
-                        resource,
-                        compPrimvars,
-                        sourceComp->GetDispatchCount(),
-                        sourceComp->GetElementCount()));
+    return std::make_shared<HdStExtCompGpuComputation>(
+        sourceComp->GetId(),
+        resource,
+        compPrimvars,
+        sourceComp->GetDispatchCount(),
+        sourceComp->GetElementCount());
 }
 
 void
@@ -440,13 +441,6 @@ HdSt_GetExtComputationPrimvarsComputations(
                                 sourceComp,
                                 compPrimvars);
 
-                        HdBufferSourceSharedPtr gpuComputationSource(
-                                new HdStExtCompGpuComputationBufferSource(
-                                    HdBufferSourceSharedPtrVector(),
-                                    gpuComputation->GetResource()));
-
-                        separateComputationSources->push_back(
-                                                        gpuComputationSource);
                         // Assume there are no dependencies between ExtComp so
                         // put all of them in queue zero.
                         computations->emplace_back(
@@ -454,12 +448,12 @@ HdSt_GetExtComputationPrimvarsComputations(
                     }
 
                     // Create a primvar buffer source for the computation
-                    HdBufferSourceSharedPtr primvarBufferSource(
-                            new HdStExtCompGpuPrimvarBufferSource(
-                                compPrimvar.name,
-                                compPrimvar.valueType,
-                                sourceComp->GetElementCount(),
-                                sourceComp->GetId()));
+                    HdBufferSourceSharedPtr primvarBufferSource =
+                        std::make_shared<HdStExtCompGpuPrimvarBufferSource>(
+                            compPrimvar.name,
+                            compPrimvar.valueType,
+                            sourceComp->GetElementCount(),
+                            sourceComp->GetId());
 
                     // Gpu primvar sources only need to reserve space
                     reserveOnlySources->push_back(primvarBufferSource);
@@ -486,12 +480,12 @@ HdSt_GetExtComputationPrimvarsComputations(
                     }
 
                     // Create a primvar buffer source for the computation
-                    HdBufferSourceSharedPtr primvarBufferSource(
-                            new HdExtCompPrimvarBufferSource(
-                                compPrimvar.name,
-                                cpuComputation,
-                                compPrimvar.sourceComputationOutputName,
-                                compPrimvar.valueType));
+                    HdBufferSourceSharedPtr primvarBufferSource =
+                        std::make_shared<HdExtCompPrimvarBufferSource>(
+                            compPrimvar.name,
+                            cpuComputation,
+                            compPrimvar.sourceComputationOutputName,
+                            compPrimvar.valueType);
 
                     // Cpu primvar sources need to allocate and commit data
                     sources->push_back(primvarBufferSource);

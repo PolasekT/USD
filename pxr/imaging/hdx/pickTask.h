@@ -27,12 +27,16 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hdx/api.h"
 
+#include "pxr/imaging/hdSt/textureUtils.h"
+#include "pxr/imaging/hd/dataSource.h"
 #include "pxr/imaging/hd/enums.h"
+#include "pxr/imaging/hd/primOriginSchema.h"
 #include "pxr/imaging/hd/renderPass.h"
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprimCollection.h"
 #include "pxr/imaging/hd/task.h"
 
+#include "pxr/base/arch/align.h"
 #include "pxr/base/tf/declarePtrs.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec2i.h"
@@ -64,10 +68,11 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DECLARE_PUBLIC_TOKENS(HdxPickTokens, HDX_API, HDX_PICK_TOKENS);
 
-TF_DECLARE_WEAK_AND_REF_PTRS(GlfDrawTarget);
-
+class HdStRenderBuffer;
 class HdStRenderPassState;
 using HdStShaderCodeSharedPtr = std::shared_ptr<class HdStShaderCode>;
+
+class Hgi;
 
 /// Pick task params. This contains render-style state (for example), but is
 /// augmented by HdxPickTaskContextParams, which is passed in on the task
@@ -85,9 +90,17 @@ struct HdxPickTaskParams
 
 /// Picking hit structure. This is output by the pick task as a record of
 /// what objects the picking query found.
-struct HdxPickHit {
+struct HdxPickHit
+{
+    /// delegateID of HdSceneDelegate that provided the picked prim.
+    /// Irrelevant for scene indices.
     SdfPath delegateId;
+    /// Path computed from scenePath's in primOrigin data source of
+    /// picked prim and instancers if provided by scene index.
+    /// Otherwise, path in render index.
     SdfPath objectId;
+    /// Only supported for scene delegates, see HdxPrimOriginInfo for
+    /// scene indices.
     SdfPath instancerId;
     int instanceIndex;
     int elementIndex;
@@ -95,7 +108,8 @@ struct HdxPickHit {
     int pointIndex;
     GfVec3f worldSpaceHitPoint;
     GfVec3f worldSpaceHitNormal;
-    // normalizedDepth is in the range [0,1].
+    /// normalizedDepth is in the range [0,1].  Nb: the pick depth buffer won't
+    /// contain items drawn with renderTag "widget" for simplicity.
     float normalizedDepth;
 
     inline bool IsValid() const {
@@ -107,6 +121,86 @@ struct HdxPickHit {
 };
 
 using HdxPickHitVector = std::vector<HdxPickHit>;
+
+/// Information about an instancer instancing a picked object (or an
+/// instancer instancing such an instancer and so on).
+struct HdxInstancerContext
+{
+    /// The path of the instancer in the scene index.
+    SdfPath instancerSceneIndexPath;
+    /// The prim origin data source of the instancer.
+    HdContainerDataSourceHandle instancerPrimOrigin;
+
+    /// For implicit instancing (native instancing in USD), the path of
+    /// the picked instance in the scene index.
+    SdfPath instanceSceneIndexPath;
+
+    /// The prim origin data source of the picked (implicit) instance
+    ///
+    /// Note that typically, exactly one of instancePrimOrigin
+    /// or instancerPrimOrigin will contain data depending on whether
+    /// the instancing at the current level was implicit or not,
+    /// respectively. This is because for implicit instancing, there is no
+    /// authored instancer in the original scene (e.g., no USD instancer
+    /// prim for USD native instancing).
+    ///
+    /// For non-nested implicit instancing, the scenePath of the
+    /// instancePrimOrigin will be an absolute path.
+    /// For nested implicit instancing, the scenePath of the instancePrimOrigin
+    /// is an absolute path for the outer instancer context and a relative
+    /// path otherwise.
+    /// The relative path corresponds to an instance within a prototype that
+    /// was itself instanced. It is relative to the prototype's root.
+    ///
+    HdContainerDataSourceHandle instancePrimOrigin;
+    /// Index of the picked instance.
+    int instanceId;
+};
+
+/// A helper to extract information about the picked prim that allows
+/// modern applications to identify a prim and, e.g., obtain the scene path
+/// such as the path of the corresponding UsdPrim.
+///
+/// Note that this helper assumes that we use scene indices and that the
+/// primOrigin data source was populated for each pickable prim in the
+/// scene index. Typically, an application will populate the scenePath in the
+/// primOrigin data source. But the design allows an application to populate
+/// the primOrigin container data source with arbitrary data that helps to
+/// give context about a prim and identify the picked prim.
+///
+/// Note that legacy applications using scene delegates cannot use
+/// HdxPrimOriginInfo and have to translate the scene index path to a scene
+/// path using the scene delegate API
+/// HdSceneDelegate::GetScenePrimPath and
+/// HdSceneDelegate::ConvertIndexPathToCachePath.
+///
+struct HdxPrimOriginInfo
+{
+    /// Query terminal scene index of render index for information about
+    /// picked prim.
+    HDX_API
+    static HdxPrimOriginInfo
+    FromPickHit(HdRenderIndex * renderIndex,
+                const HdxPickHit &hit);
+
+    /// Combines instance scene paths and prim scene path to obtain the full
+    /// scene path.
+    ///
+    /// The scene path is extracted from the prim origin container data
+    /// source by using the given key.
+    ///
+    HDX_API
+    SdfPath GetFullPath(
+        const TfToken &nameInPrimOrigin =
+                    HdPrimOriginSchemaTokens->scenePath) const;
+
+    /// Information about the instancers instancing the picked object.
+    /// The outer most instancer will be first.
+    std::vector<HdxInstancerContext> instancerContexts;
+    /// The prim origin data source for the picked prim if provided
+    /// by the scene index.
+    HdContainerDataSourceHandle primOrigin;
+};
 
 /// Pick task context params.  This contains task params that can't come from
 /// the scene delegate (like resolution mode and pick location, that might
@@ -214,30 +308,53 @@ public:
 private:
     HdxPickTaskParams _params;
     HdxPickTaskContextParams _contextParams;
-    TfTokenVector _renderTags;
+    TfTokenVector _allRenderTags;
+    TfTokenVector _nonWidgetRenderTags;
 
     // We need to cache a pointer to the render index so Execute() can
     // map prim ID to paths.
     HdRenderIndex *_index;
 
-    void _InitIfNeeded(GfVec2i const& widthHeight);
+    void _InitIfNeeded();
+    void _CreateAovBindings();
+    void _CleanupAovBindings();
+    void _ResizeOrCreateBufferForAOV(
+        const HdRenderPassAovBinding& aovBinding);
+
     void _ConditionStencilWithGLCallback(
-            HdxPickTaskContextParams::DepthMaskCallback maskCallback);
+            HdxPickTaskContextParams::DepthMaskCallback maskCallback,
+            HdRenderBuffer const * depthStencilBuffer);
 
     bool _UseOcclusionPass() const;
+    bool _UseWidgetPass() const;
 
-    // Create a shared render pass each for pickables and unpickables
+    template<typename T>
+    HdStTextureUtils::AlignedBuffer<T>
+    _ReadAovBuffer(TfToken const & aovName) const;
+
+    HdRenderBuffer const * _FindAovBuffer(TfToken const & aovName) const;
+
+    // Create a shared render pass each for pickables, unpickables, and 
+    // widgets (which may draw on top even when occluded).
     HdRenderPassSharedPtr _pickableRenderPass;
     HdRenderPassSharedPtr _occluderRenderPass;
+    HdRenderPassSharedPtr _widgetRenderPass;
 
     // Having separate render pass states allows us to use different
     // shader mixins if we choose to (we don't currently).
     HdRenderPassStateSharedPtr _pickableRenderPassState;
     HdRenderPassStateSharedPtr _occluderRenderPassState;
+    HdRenderPassStateSharedPtr _widgetRenderPassState;
 
-    // A single draw target is shared for all contexts.  Since the FBO cannot
-    // be shared, we clone the attachments on each request.
-    GlfDrawTargetRefPtr _drawTarget;
+    Hgi* _hgi;
+
+    std::vector<std::unique_ptr<HdStRenderBuffer>> _pickableAovBuffers;
+    HdRenderPassAovBindingVector _pickableAovBindings;
+    HdRenderPassAovBinding _occluderAovBinding;
+    size_t _pickableDepthIndex;
+    TfToken _depthToken;
+    std::unique_ptr<HdStRenderBuffer> _widgetDepthStencilBuffer;
+    HdRenderPassAovBindingVector _widgetAovBindings;
 
     HdxPickTask() = delete;
     HdxPickTask(const HdxPickTask &) = delete;
@@ -317,6 +434,7 @@ public:
 
 private:
     bool _ResolveHit(int index, int x, int y, float z, HdxPickHit* hit) const;
+
     size_t _GetHash(int index) const;
     bool _IsValidHit(int index) const;
 

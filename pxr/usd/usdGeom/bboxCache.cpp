@@ -34,7 +34,10 @@
 
 #include "pxr/usd/usd/modelAPI.h"
 #include "pxr/usd/usd/primRange.h"
+
 #include "pxr/base/trace/trace.h"
+
+#include "pxr/base/work/withScopedParallelism.h"
 
 #include "pxr/base/tf/pyLock.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -45,6 +48,29 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+namespace {
+
+// For code that knows at compile time whether we need to apply a transform.
+// Such code is told through a template parameter TransformType whether to
+// apply a transform (TransformType = GfMatrix4d) or not (TransformType =
+// _IdentityTransform).
+class _IdentityTransform
+{
+};
+
+// Overloads to transform GfBBox3d.
+inline void
+_Transform(GfBBox3d * const bbox, const _IdentityTransform &m)
+{
+}
+
+inline void
+_Transform(GfBBox3d * const bbox, const GfMatrix4d &m)
+{
+    bbox->Transform(m);
+}
+
+}
 
 // Thread-local Xform cache.
 // This should be replaced with (TBD) multi-threaded XformCache::Prepopulate
@@ -176,7 +202,7 @@ private:
     void _ExecuteTaskForPrototype(const _PrimContext& prototype,
                                _PrototypeTaskMap* prototypeTasks,
                                _ThreadXformCache* xfCaches,
-                               WorkArenaDispatcher* dispatcher)
+                               WorkDispatcher* dispatcher)
     {
         UsdGeomBBoxCache::_BBoxTask(
             prototype, GfMatrix4d(1.0), _owner, xfCaches)();
@@ -383,10 +409,12 @@ UsdGeomBBoxCache::ComputeUntransformedBound(const UsdPrim& prim)
     return _GetCombinedBBoxForIncludedPurposes(bboxes);
 }
 
+template<typename TransformType>
 GfBBox3d
-UsdGeomBBoxCache::ComputeUntransformedBound(
+UsdGeomBBoxCache::_ComputeBoundWithOverridesHelper(
     const UsdPrim &prim,
     const SdfPathSet &pathsToSkip,
+    const TransformType &primOverride,
     const TfHashMap<SdfPath, GfMatrix4d, SdfPath::Hash> &ctmOverrides)
 {
     GfBBox3d empty;
@@ -458,13 +486,14 @@ UsdGeomBBoxCache::ComputeUntransformedBound(
         GfBBox3d bbox;
         if (!foundAncestorWithOverride) {
             bbox = ComputeRelativeBound(p, prim);
+            _Transform(&bbox, primOverride);
         } else {
             // Compute bound relative to the path for which we know the
             // corrected prim-relative CTM.
             bbox = ComputeRelativeBound(p,
                 prim.GetStage()->GetPrimAtPath(overrideIter->first));
 
-            // The override CTM is already relative to the given prim.
+            // Apply the override CTM.
             const GfMatrix4d &overrideXform = overrideIter->second;
             bbox.Transform(overrideXform);
         }
@@ -476,6 +505,32 @@ UsdGeomBBoxCache::ComputeUntransformedBound(
     return result;
 }
 
+GfBBox3d
+UsdGeomBBoxCache::ComputeUntransformedBound(
+    const UsdPrim &prim,
+    const SdfPathSet &pathsToSkip,
+    const TfHashMap<SdfPath, GfMatrix4d, SdfPath::Hash> &ctmOverrides)
+{
+    return _ComputeBoundWithOverridesHelper(
+        prim,
+        pathsToSkip,
+        _IdentityTransform(),
+        ctmOverrides);
+}
+
+GfBBox3d
+UsdGeomBBoxCache::ComputeWorldBoundWithOverrides(
+    const UsdPrim &prim,
+    const SdfPathSet &pathsToSkip,
+    const GfMatrix4d &primOverride,
+    const TfHashMap<SdfPath, GfMatrix4d, SdfPath::Hash> &ctmOverrides)
+{
+    return _ComputeBoundWithOverridesHelper(
+        prim,
+        pathsToSkip,
+        primOverride,
+        ctmOverrides);
+}
 
 bool
 UsdGeomBBoxCache::_ComputePointInstanceBoundsHelper(
@@ -915,6 +970,12 @@ UsdGeomBBoxCache::_ShouldPruneChildren(const UsdPrim &prim,
         return true;
     }
 
+    // Check if prim is a UsdGeomBoundable. Boundables should always provide
+    // their own extent and do not require participation from descendants.
+    if (prim.IsA<UsdGeomBoundable>()) {
+        return true;
+    }
+        
     if (!_UseExtentsHintForPrim(prim)) {
         return false;
     }
@@ -967,15 +1028,15 @@ UsdGeomBBoxCache::_FindOrCreateEntriesForPrim(
         _PrimContext cachePrimContext(
             *it, primContext.instanceInheritablePurpose);
         _Entry *cacheEntry = _InsertEntry(cachePrimContext);
+        
         if (_ShouldPruneChildren(*it, cacheEntry)) {
             // The entry already exists and is complete, we don't need
             // the child entries for this query.
             it.PruneChildren();
         }
-
-        if (it->IsInstance()) {
-            // This prim is an instance, so we need to compute
-            // bounding boxes for the prototype prims.
+        else if (it->IsInstance()) {
+            // This prim is an instance without an extent or hint, so we need
+            // to compute bounding boxes for the prototype prims.
             const UsdPrim prototype = it->GetPrototype();
             // We typically compute the purpose for prims later in _ResolvePrim,
             // but for an instance prim, we need to compute the purpose for this 
@@ -1023,36 +1084,39 @@ UsdGeomBBoxCache::_Resolve(
         return (!bboxes->empty());
     }
 
-    // Resolve all prototype prims first to avoid having to synchronize
-    // tasks that depend on the same prototype.
-    if (!prototypePrimContexts.empty()) {
-        _PrototypeBBoxResolver bboxesForPrototypes(this);
-        bboxesForPrototypes.Resolve(prototypePrimContexts);
-    }
+    WorkWithScopedParallelism([&]() {
+                        
+            // Resolve all prototype prims first to avoid having to synchronize
+            // tasks that depend on the same prototype.
+            if (!prototypePrimContexts.empty()) {
+                _PrototypeBBoxResolver bboxesForPrototypes(this);
+                bboxesForPrototypes.Resolve(prototypePrimContexts);
+            }
+            
+            // XXX: This swapping out is dubious... see XXX below.
+            _ThreadXformCache xfCaches;
+            xfCaches.local().Swap(_ctmCache);
+            
+            // Find the nearest ancestor prim that's a model or a subcomponent.
+            UsdPrim modelPrim = _GetNearestComponent(prim);
+            GfMatrix4d inverseComponentCtm = _ctmCache.GetLocalToWorldTransform(
+                modelPrim).GetInverse();
+            
+            _dispatcher.Run(
+                _BBoxTask(primContext, inverseComponentCtm, this, &xfCaches));
+            _dispatcher.Wait();
 
-    // XXX: This swapping out is dubious... see XXX below.
-    _ThreadXformCache xfCaches;
-    xfCaches.local().Swap(_ctmCache);
-
-    // Find the nearest ancestor prim that's a model or a subcomponent.
-    UsdPrim modelPrim = _GetNearestComponent(prim);
-    GfMatrix4d inverseComponentCtm = _ctmCache.GetLocalToWorldTransform(
-        modelPrim).GetInverse();
-
-    _dispatcher.Run(
-        _BBoxTask(primContext, inverseComponentCtm, this, &xfCaches));
-    _dispatcher.Wait();
-
-    // We save the result of one of the caches, but it might be interesting to
-    // merge them all here at some point.
-    // XXX: Is this valid?  This only makes sense if we're *100% certain* that
-    // rootTask above runs in this thread.  If it's picked up by another worker
-    // it won't populate the local xfCaches we're swapping with.
-    xfCaches.local().Swap(_ctmCache);
-
+            // We save the result of one of the caches, but it might be
+            // interesting to merge them all here at some point.  XXX: Is this
+            // valid?  This only makes sense if we're *100% certain* that
+            // rootTask above runs in this thread.  If it's picked up by another
+            // worker it won't populate the local xfCaches we're swapping with.
+            xfCaches.local().Swap(_ctmCache);
+        });
+    
     // Note: the map may contain unresolved entries, but future queries will
     // populate them.
-
+    
     // If the bound is in the cache, return it.
     entry = _FindEntry(primContext);
     *bboxes = entry->bboxes;
@@ -1098,30 +1162,6 @@ UsdGeomBBoxCache::_GetBBoxFromExtentsHint(
     }
 
     return true;
-}
-
-bool
-UsdGeomBBoxCache::_ComputeExtent(const UsdGeomBoundable& boundableObj,
-                                 VtVec3fArray* extent) const
-{
-    // Display a message if the debug flag is enabled.
-    TF_DEBUG(USDGEOM_BBOX).Msg(
-        "[BBox Cache] WARNING: No valid extent authored for "
-        "<%s>. Computing a fallback value.",
-        boundableObj.GetPath().GetString().c_str());
-
-    // Create extent
-    bool successGettingExtent =
-        UsdGeomBoundable::ComputeExtentFromPlugins(
-            boundableObj, _time, extent);
-
-    if (!successGettingExtent) {
-        TF_DEBUG(USDGEOM_BBOX).Msg(
-            "[BBox Cache] WARNING: Unable to compute extent for "
-            "<%s>.", boundableObj.GetPath().GetString().c_str());
-    }
-
-    return successGettingExtent;
 }
 
 void
@@ -1218,110 +1258,54 @@ UsdGeomBBoxCache::_ResolvePrim(_BBoxTask* task,
     // incorporate the extent of all children, which are pruned from further
     // traversal.
     GfRange3d myRange;
-    bool pruneChildren = false;
 
     // Attempt to resolve a boundable prim's extent. If no extent is authored,
     // we attempt to create it for usdGeomPointBased and child classes. If
     // it cannot be created or found, the user is notified of an incorrect prim.
     if (UsdGeomBoundable boundableObj = UsdGeomBoundable(prim)) {
+        // UsdGeomBoundable::ComputeExtent checks to see if extent attr has an
+        // authored value and sets extent to that, if not it computes extent
+        // using intrinsic geometric parameters, provided ComputeExtentFunction
+        // is registered for this boundableObj.  If we successfully obtain an
+        // extent, create BBox for purpose.
         VtVec3fArray extent;
-        // Read the extent of the geometry, an axis-aligned bounding box in
-        // local space.
-        const UsdAttributeQuery& extentQuery =
-            _GetOrCreateExtentQuery(prim, &queries[Extent]);
-
-        // If some extent is authored, check validity
-        bool successGettingExtent = false;
-        if (extentQuery.Get(&extent, _time)) {
-
-            successGettingExtent = extent.size() == 2;
-            if (!successGettingExtent) {
-                TF_WARN("[BBox Cache] Extent for <%s> is of size %zu "
-                        "instead of 2.", primContext.ToString().c_str(),
-                        extent.size());
-            }
-        }
-
-        // If we failed to get extent, try to create it.
-        if (!successGettingExtent) {
-
-            // Try to calculate the extent.
-            if (UsdGeomPointBased pointBasedObj = UsdGeomPointBased(prim)) {
-
-                // XXX: We check if the points attribute is authored on the
-                // given prim. All we require from clients is that IF they
-                // author points, they MUST also author extent.
-                //
-                // If no extent is authored, but points has some value, we
-                // compute the extent and display a debug message.
-                //
-                // Otherwise, the client is consistent with our demands;
-                // no warning is issued, and no extent is computed.
-                //
-                // For more information, see bugzilla #115735
-
-                bool primHasAuthoredPoints =
-                    pointBasedObj.GetPointsAttr().HasAuthoredValue();
-
-                if (primHasAuthoredPoints) {
-                    successGettingExtent = _ComputeExtent(boundableObj, &extent);
-                }
-
-            } else {
-
-                successGettingExtent = _ComputeExtent(boundableObj, &extent);
-            }
-
-            if (successGettingExtent) {
-                // Extent computation reported success, but validate the result.
-                successGettingExtent = extent.size() == 2;
-                if (!successGettingExtent) {
-                    TF_WARN("[BBox Cache] Computed extent for <%s> is of size %zu "
-                            "instead of 2.", primContext.ToString().c_str(),
-                            extent.size());
-                }
-            }
-        }
-
-        // On Successful extent, create BBox for purpose.
-        if (successGettingExtent) {
-            pruneChildren = true;
+        if (boundableObj.ComputeExtent(_time, &extent)) {
             GfBBox3d &bboxForPurpose = (*bboxes)[entry->purposeInfo.purpose];
             bboxForPurpose.SetRange(GfRange3d(extent[0], extent[1]));
         }
     }
+    else {
+        // This is not a boundable, so descend to children.
 
-    // --
-    // NOTE: bbox is currently in its local space, the space in which
-    // we want to cache it.  If we need to merge in child bounds below,
-    // though, we will need to temporarily transform it into component space.
-    // --
-    bool bboxInComponentSpace = false;
+        // --
+        // NOTE: bbox is currently in its local space, the space in which
+        // we want to cache it.  If we need to merge in child bounds below,
+        // though, we will need to temporarily transform it into component space.
+        // --
+        bool bboxInComponentSpace = false;
 
-    // This will be computed below if the prim has children with bounds.
-    GfMatrix4d localToComponentXform(1.0);
-
-    // Accumulate child bounds:
-    //
-    //  1) Filter and queue up the children to be processed.
-    //  2) Spawn new child tasks and wait for them to complete.
-    //  3) Accumulate the results into this cache entry.
-    //
-
-    // Filter children and queue children.
-    if (!pruneChildren) {
+        // This will be computed below if the prim has children with bounds.
+        GfMatrix4d localToComponentXform(1.0);
+        
+        // Accumulate child bounds:
+        //
+        //  1) Filter and queue up the children to be processed.
+        //  2) Spawn new child tasks and wait for them to complete.
+        //  3) Accumulate the results into this cache entry.
+        //
+        
         // Compute the enclosing model's (or subcomponent's) inverse CTM.
         // This will be used to compute the child bounds in model-space.
         const GfMatrix4d &inverseEnclosingComponentCtm =
-                _IsComponentOrSubComponent(prim) ?
-                xfCache.GetLocalToWorldTransform(prim).GetInverse() :
-                inverseComponentCtm;
-
+            _IsComponentOrSubComponent(prim) ?
+            xfCache.GetLocalToWorldTransform(prim).GetInverse() :
+            inverseComponentCtm;
+        
         std::vector<std::pair<_PrimContext, _BBoxTask> > included;
         // See comment in _Resolve about unloaded prims
         UsdPrimSiblingRange children;
         TfToken childInheritableInstancePurpose;
-
+        
         const bool primIsInstance = prim.IsInstance();
         if (primIsInstance) {
             const UsdPrim prototype = prim.GetPrototype();
@@ -1414,13 +1398,14 @@ UsdGeomBBoxCache::_ResolvePrim(_BBoxTask* task,
         // All the child bboxTasks will be NULL if the prim is an instance.
         //
         if (!primIsInstance) {
-            WorkArenaDispatcher wd;
-            for(const auto &childAndTask : included) {
-                if (childAndTask.second) {
-                    wd.Run(childAndTask.second);
-                }
-            }
-            wd.Wait();
+            WorkWithScopedParallelism([&]() {
+                    WorkDispatcher wd;
+                    for(auto &childAndTask : included) {
+                        if (childAndTask.second) {
+                            wd.Run(childAndTask.second);
+                        }
+                    }
+                });
 
             // We may have switched threads, grab the thread-local xfCache
             // again.
@@ -1492,18 +1477,18 @@ UsdGeomBBoxCache::_ResolvePrim(_BBoxTask* task,
                 }
             }
         }
-    }
-
-    // All prims must be cached in local space: convert bbox from component to
-    // local space.
-    if (bboxInComponentSpace) {
-        // When children are accumulated, the bbox range is in component space,
-        // so we must apply the inverse component-space transform
-        // (component-to-local) to move it to local space.
-        GfMatrix4d componentToLocalXform = localToComponentXform.GetInverse();
-        for (auto &purposeAndBBox : *bboxes) {
-            GfBBox3d &bbox = purposeAndBBox.second;
-            bbox.SetMatrix(componentToLocalXform);
+        // All prims must be cached in local space: convert bbox from component
+        // to local space.
+        if (bboxInComponentSpace) {
+            // When children are accumulated, the bbox range is in component
+            // space, so we must apply the inverse component-space transform
+            // (component-to-local) to move it to local space.
+            GfMatrix4d componentToLocalXform =
+                localToComponentXform.GetInverse();
+            for (auto &purposeAndBBox : *bboxes) {
+                GfBBox3d &bbox = purposeAndBBox.second;
+                bbox.SetMatrix(componentToLocalXform);
+            }
         }
     }
 

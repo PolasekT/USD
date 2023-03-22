@@ -211,32 +211,19 @@ bool _IsValidCompression(HgiTextureDesc const & desc)
 HgiGLTexture::HgiGLTexture(HgiTextureDesc const & desc)
     : HgiTexture(desc)
     , _textureId(0)
+    , _bindlessHandle(0)
 {
     GLenum glInternalFormat = 0;
     GLenum glFormat = 0;
     GLenum glPixelType = 0;
+    HgiGLConversions::GetFormat(
+        desc.format,
+        desc.usage,
+        &glFormat,
+        &glPixelType,
+        &glInternalFormat);
+
     const bool isCompressed = HgiIsCompressed(desc.format);
-
-    if (desc.usage & HgiTextureUsageBitsDepthTarget) {
-        TF_VERIFY(desc.format == HgiFormatFloat32 ||
-                  desc.format == HgiFormatFloat32UInt8);
-        
-        if (desc.format == HgiFormatFloat32UInt8) {
-            glFormat = GL_DEPTH_STENCIL;
-            glInternalFormat = GL_DEPTH32F_STENCIL8;
-        } else {
-            glFormat = GL_DEPTH_COMPONENT;
-            glInternalFormat = GL_DEPTH_COMPONENT32F;
-        }
-        glPixelType = GL_FLOAT;
-    } else {
-        HgiGLConversions::GetFormat(
-            desc.format, 
-            &glFormat, 
-            &glPixelType,
-            &glInternalFormat);
-    }
-
     if (isCompressed && !_IsValidCompression(desc)) {
         return;
     }
@@ -350,6 +337,7 @@ HgiGLTexture::HgiGLTexture(HgiTextureDesc const & desc)
 HgiGLTexture::HgiGLTexture(HgiTextureViewDesc const & desc)
     : HgiTexture(desc.sourceTexture->GetDescriptor())
     , _textureId(0)
+    , _bindlessHandle(0)
 {
     // Update the texture descriptor to reflect the view desc
     _descriptor.debugName = desc.debugName;
@@ -361,24 +349,12 @@ HgiGLTexture::HgiGLTexture(HgiTextureViewDesc const & desc)
         static_cast<HgiGLTexture*>(desc.sourceTexture.Get());
     GLenum glInternalFormat = 0;
 
-    if (srcTexture->GetDescriptor().usage & HgiTextureUsageBitsDepthTarget) {
-        TF_VERIFY(desc.format == HgiFormatFloat32 ||
-                  desc.format == HgiFormatFloat32UInt8);
-        
-        if (desc.format == HgiFormatFloat32UInt8) {
-            glInternalFormat = GL_DEPTH32F_STENCIL8;
-        } else {
-            glInternalFormat = GL_DEPTH_COMPONENT32F;
-        }
-    } else {
-        GLenum glFormat = 0;
-        GLenum glPixelType = 0;
-        HgiGLConversions::GetFormat(
-            desc.format,
-            &glFormat,
-            &glPixelType,
-            &glInternalFormat);
-    }
+    HgiGLConversions::GetFormat(
+        desc.format,
+        _descriptor.usage,
+        nullptr,
+        nullptr,
+        &glInternalFormat);
 
     // Note we must use glGenTextures, not glCreateTextures.
     // glTextureView requires the textureId to be unbound and not given a type.
@@ -440,5 +416,23 @@ HgiGLTexture::GetRawResource() const
 {
     return (uint64_t) _textureId;
 }
+
+uint64_t
+HgiGLTexture::GetBindlessHandle()
+{
+    if (!_bindlessHandle) {
+        const GLuint64EXT result = glGetTextureHandleARB(_textureId);
+        if (!glIsTextureHandleResidentARB(result)) {
+            glMakeTextureHandleResidentARB(result);
+        }
+
+        _bindlessHandle = result;
+
+        HGIGL_POST_PENDING_GL_ERRORS();
+    }
+
+    return _bindlessHandle;
+}
+
 
 PXR_NAMESPACE_CLOSE_SCOPE

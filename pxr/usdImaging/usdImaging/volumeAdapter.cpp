@@ -23,6 +23,8 @@
 //
 
 #include "pxr/usdImaging/usdImaging/volumeAdapter.h"
+
+#include "pxr/usdImaging/usdImaging/dataSourceVolume.h"
 #include "pxr/usdImaging/usdImaging/fieldAdapter.h"
 #include "pxr/usdImaging/usdImaging/delegate.h"
 #include "pxr/usdImaging/usdImaging/indexProxy.h"
@@ -48,6 +50,52 @@ TF_REGISTRY_FUNCTION(TfType)
 
 UsdImagingVolumeAdapter::~UsdImagingVolumeAdapter() 
 {
+}
+
+TfTokenVector
+UsdImagingVolumeAdapter::GetImagingSubprims(UsdPrim const& prim)
+{
+    return { TfToken() };
+}
+
+TfToken
+UsdImagingVolumeAdapter::GetImagingSubprimType(
+        UsdPrim const& prim,
+        TfToken const& subprim)
+{
+    if (subprim.IsEmpty()) {
+        return HdPrimTypeTokens->volume;
+    }
+    return TfToken();
+}
+
+HdContainerDataSourceHandle
+UsdImagingVolumeAdapter::GetImagingSubprimData(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        const UsdImagingDataSourceStageGlobals &stageGlobals)
+{
+    if (subprim.IsEmpty()) {
+        return UsdImagingDataSourceVolumePrim::New(
+            prim.GetPath(),
+            prim,
+            stageGlobals);
+    }
+    return nullptr;
+}
+
+HdDataSourceLocatorSet
+UsdImagingVolumeAdapter::InvalidateImagingSubprim(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        TfTokenVector const& properties)
+{
+    if (subprim.IsEmpty()) {
+        return UsdImagingDataSourceVolumePrim::Invalidate(
+            prim, subprim, properties);
+    }
+
+    return HdDataSourceLocatorSet();
 }
 
 bool
