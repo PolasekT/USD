@@ -23,6 +23,7 @@
 //
 #include "pxr/imaging/hgiVulkan/blitCmds.h"
 #include "pxr/imaging/hgiVulkan/buffer.h"
+#include "pxr/imaging/hgiVulkan/capabilities.h"
 #include "pxr/imaging/hgiVulkan/commandQueue.h"
 #include "pxr/imaging/hgiVulkan/computeCmds.h"
 #include "pxr/imaging/hgiVulkan/computePipeline.h"
@@ -65,12 +66,29 @@ HgiVulkan::HgiVulkan()
 
 HgiVulkan::~HgiVulkan()
 {
+    HgiVulkanCommandQueue* queue = _device->GetCommandQueue();
+
+    // Wait for command buffers to complete, then reset command buffers for 
+    // each device's queue.
+    queue->ResetConsumedCommandBuffers(HgiSubmitWaitTypeWaitUntilCompleted);
+
     // Wait for all devices and perform final garbage collection.
     _device->WaitForIdle();
     _garbageCollector->PerformGarbageCollection(_device);
     delete _garbageCollector;
     delete _device;
     delete _instance;
+}
+
+bool
+HgiVulkan::IsBackendSupported() const
+{
+    // Want Vulkan 1.2 or higher.
+    const uint32_t apiVersion = GetCapabilities()->GetAPIVersion();
+    const uint32_t majorVersion = VK_VERSION_MAJOR(apiVersion);
+    const uint32_t minorVersion = VK_VERSION_MINOR(apiVersion);
+
+    return (majorVersion >= 1) && (minorVersion >= 2);
 }
 
 /* Multi threaded */
@@ -90,9 +108,10 @@ HgiVulkan::CreateBlitCmds()
 }
 
 HgiComputeCmdsUniquePtr
-HgiVulkan::CreateComputeCmds()
+HgiVulkan::CreateComputeCmds(
+    HgiComputeCmdsDesc const& desc)
 {
-    HgiVulkanComputeCmds* cmds(new HgiVulkanComputeCmds(this));
+    HgiVulkanComputeCmds* cmds(new HgiVulkanComputeCmds(this, desc));
     return HgiComputeCmdsUniquePtr(cmds);
 }
 
@@ -175,8 +194,8 @@ HgiShaderFunctionHandle
 HgiVulkan::CreateShaderFunction(HgiShaderFunctionDesc const& desc)
 {
     return HgiShaderFunctionHandle(
-        new HgiVulkanShaderFunction(GetPrimaryDevice(), desc),
-        GetUniqueId());
+        new HgiVulkanShaderFunction(GetPrimaryDevice(), this, desc,
+        GetCapabilities()->GetShaderVersion()), GetUniqueId());
 }
 
 /* Multi threaded */
@@ -250,6 +269,20 @@ HgiVulkan::DestroyComputePipeline(HgiComputePipelineHandle* pipeHandle)
 TfToken const&
 HgiVulkan::GetAPIName() const {
     return HgiTokens->Vulkan;
+}
+
+/* Multi threaded */
+HgiVulkanCapabilities const*
+HgiVulkan::GetCapabilities() const
+{
+    return &_device->GetDeviceCapabilities();
+}
+
+
+HgiIndirectCommandEncoder*
+HgiVulkan::GetIndirectCommandEncoder() const
+{
+    return nullptr;
 }
 
 /* Single threaded */

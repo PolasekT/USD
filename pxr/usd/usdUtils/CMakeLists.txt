@@ -56,7 +56,10 @@ pxr_library(usdUtils
         __init__.py
         complianceChecker.py
         constantsGroup.py
+        fixBrokenPixarSchemas.py
+        toolPaths.py
         updateSchemaWithSdrNode.py
+        usdzUtils.py
 
     DOXYGEN_FILES
         overview.dox
@@ -79,6 +82,7 @@ pxr_test_scripts(
     testenv/testUsdUtilsStitch.py
     testenv/testUsdUtilsStitchClips.py
     testenv/testUsdUtilsTimeCodeRange.py
+    testenv/testUsdUtilsUpdateSchemaWithSdrNode.py
     testenv/testUsdUtilsVarSelsSessionLayer.py
 )
 
@@ -185,6 +189,16 @@ pxr_install_test_dir(
 pxr_install_test_dir(
     SRC testenv/testUsdUtilsStitchClips.testenv
     DEST testUsdUtilsStitchClips
+)
+
+pxr_install_test_dir(
+    SRC testenv/testUsdUtilsUpdateSchemaWithSdrNode
+    DEST testUsdUtilsUpdateSchemaWithSdrNode
+)
+
+pxr_install_test_dir(
+    SRC testenv/testUsdUtilsUpdateSchemaWithSdrNode
+    DEST testUsdUtilsUpdateSchemaWithSdrNodeError
 )
 
 pxr_register_test(testUsdUtilsAuthoring
@@ -427,7 +441,7 @@ pxr_register_test(testUsdUtilsIntrospection
 pxr_register_test(testUsdUtilsModifyAssetPaths
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdUtilsModifyAssetPaths layer.usda modified.usda"
-    DIFF_COMPARE modified.usda
+    DIFF_COMPARE modified.usda duplicates.usda removal.usda
     EXPECTED_RETURN_CODE 0
 )
 
@@ -459,6 +473,28 @@ pxr_register_test(testUsdUtilsStitchClips
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdUtilsStitchClips"
     EXPECTED_RETURN_CODE 0
+)
+
+pxr_register_test(testUsdUtilsUpdateSchemaWithSdrNode
+    PYTHON
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdUtilsUpdateSchemaWithSdrNode"
+    DIFF_COMPARE resultAPISchema.usda
+    DIFF_COMPARE resultAPIIdentifierMissing.usda
+    DIFF_COMPARE result_override.usda
+    DIFF_COMPARE resultUsdShadeConnectableAPIMetadata.usda
+    DIFF_COMPARE resultUsdShadeConnectableAPIMetadata2.usda
+    DIFF_COMPARE duplicateProp.usda
+    DIFF_COMPARE duplicatePropTypeMisMatch.usda
+    DIFF_COMPARE schemaConcrete.usda
+    DIFF_COMPARE testSdrNodeNonShaderNamespacePrefixResult.usda
+    DIFF_COMPARE testSdrNodeShaderNamespacePrefixResult.usda
+    EXPECTED_RETURN_CODE 0
+)
+
+pxr_register_test(testUsdUtilsUpdateSchemaWithSdrNodeError
+    PYTHON
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdUtilsUpdateSchemaWithSdrNode TestUsdUpdateSchemaWithSdrNode True"
+    EXPECTED_RETURN_CODE 1
 )
 
 pxr_register_test(testUsdUtilsStitchCpp

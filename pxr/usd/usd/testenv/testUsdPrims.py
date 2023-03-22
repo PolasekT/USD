@@ -134,18 +134,31 @@ class TestUsdPrim(unittest.TestCase):
 
         stage = Usd.Stage.Open(payload)
         over = stage.OverridePrim(primPath)
-        over.GetReferences().AddReference(Sdf.Reference(basicOver.identifier, primPath))
+        over.GetReferences().AddReference(
+            Sdf.Reference(basicOver.identifier, primPath, 
+                          Sdf.LayerOffset(0.0, 2.0)))
 
         stage = Usd.Stage.Open(base)
         prim = stage.DefinePrim(primPath)
-        prim.GetPayloads().AddPayload(payload.identifier, primPath)
+        prim.GetPayloads().AddPayload(
+            Sdf.Payload(payload.identifier, primPath, Sdf.LayerOffset(10.0)))
         stage.GetRootLayer().subLayerPaths.append(sublayer.identifier) 
+        stage.GetRootLayer().subLayerOffsets[0] = Sdf.LayerOffset(20.0)
 
         expectedPrimStack = [layer.GetPrimAtPath(primPath) for layer in layers]
         stage = Usd.Stage.Open(base)
         prim = stage.GetPrimAtPath(primPath)
 
         assert prim.GetPrimStack() == expectedPrimStack
+
+        expectedPrimStackWithLayerOffsets = [
+            (expectedPrimStack[0], Sdf.LayerOffset()),
+            (expectedPrimStack[1], Sdf.LayerOffset(20.0)),
+            (expectedPrimStack[2], Sdf.LayerOffset(10.0)),
+            (expectedPrimStack[3], Sdf.LayerOffset(10.0, 2.0)),
+        ]
+        assert (prim.GetPrimStackWithLayerOffsets() == 
+                    expectedPrimStackWithLayerOffsets)
 
     def test_GetCachedPrimBits(self):
         layerFile = 'test.usda'
@@ -225,6 +238,8 @@ class TestUsdPrim(unittest.TestCase):
         assert root.IsGroup()
         assert not root.IsAbstract()
         assert root.IsDefined()
+        assert root.HasDefiningSpecifier()
+        assert root.GetSpecifier() == Sdf.SpecifierDef
 
         assert globalClass.IsActive()
         assert globalClass.IsLoaded()
@@ -232,6 +247,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not globalClass.IsGroup()
         assert globalClass.IsAbstract()
         assert globalClass.IsDefined()
+        assert globalClass.HasDefiningSpecifier()
+        assert globalClass.GetSpecifier() == Sdf.SpecifierClass
 
         assert abstractSubscope.IsActive()
         assert abstractSubscope.IsLoaded()
@@ -239,6 +256,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not abstractSubscope.IsGroup()
         assert abstractSubscope.IsAbstract()
         assert abstractSubscope.IsDefined()
+        assert abstractSubscope.HasDefiningSpecifier()
+        assert abstractSubscope.GetSpecifier() == Sdf.SpecifierDef
 
         assert abstractOver.IsActive()
         assert abstractOver.IsLoaded()
@@ -246,6 +265,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not abstractOver.IsGroup()
         assert abstractOver.IsAbstract()
         assert not abstractOver.IsDefined()
+        assert not abstractOver.HasDefiningSpecifier()
+        assert abstractOver.GetSpecifier() == Sdf.SpecifierOver
 
         assert pureOver.IsActive()
         assert pureOver.IsLoaded()
@@ -253,6 +274,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not pureOver.IsGroup()
         assert not pureOver.IsAbstract()
         assert not pureOver.IsDefined()
+        assert not pureOver.HasDefiningSpecifier()
+        assert pureOver.GetSpecifier() == Sdf.SpecifierOver
 
         assert undefSubscope.IsActive()
         assert undefSubscope.IsLoaded()
@@ -260,6 +283,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not undefSubscope.IsGroup()
         assert not undefSubscope.IsAbstract()
         assert not undefSubscope.IsDefined()
+        assert undefSubscope.HasDefiningSpecifier()
+        assert undefSubscope.GetSpecifier() == Sdf.SpecifierDef
 
         assert group.IsActive()
         assert not group.IsLoaded()
@@ -267,6 +292,8 @@ class TestUsdPrim(unittest.TestCase):
         assert group.IsGroup()
         assert not group.IsAbstract()
         assert group.IsDefined()
+        assert group.HasDefiningSpecifier()
+        assert group.GetSpecifier() == Sdf.SpecifierDef
 
         assert modelChild.IsActive()
         assert not modelChild.IsLoaded()
@@ -274,6 +301,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not modelChild.IsGroup()
         assert not modelChild.IsAbstract()
         assert modelChild.IsDefined()
+        assert modelChild.HasDefiningSpecifier()
+        assert modelChild.GetSpecifier() == Sdf.SpecifierDef
 
         assert localChild.IsActive()
         assert not localChild.IsLoaded()
@@ -281,6 +310,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not localChild.IsGroup()
         assert not localChild.IsAbstract()
         assert localChild.IsDefined()
+        assert localChild.HasDefiningSpecifier()
+        assert localChild.GetSpecifier() == Sdf.SpecifierDef
 
         assert undefModelChild.IsActive()
         assert not undefModelChild.IsLoaded()
@@ -288,6 +319,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not undefModelChild.IsGroup()
         assert not undefModelChild.IsAbstract()
         assert not undefModelChild.IsDefined()
+        assert not undefModelChild.HasDefiningSpecifier()
+        assert undefModelChild.GetSpecifier() == Sdf.SpecifierOver
 
         assert not deactivatedScope.IsActive()
         assert not deactivatedScope.IsLoaded()
@@ -295,6 +328,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert not stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -307,6 +342,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -319,6 +356,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -331,6 +370,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert not stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -340,6 +381,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedModel.IsGroup()
         assert not deactivatedModel.IsAbstract()
         assert deactivatedModel.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert not stage.GetPrimAtPath(
             deactivatedModel.GetPath().AppendChild('child'))
 
@@ -349,6 +392,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedOver.IsGroup()
         assert not deactivatedOver.IsAbstract()
         assert not deactivatedOver.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert not stage.GetPrimAtPath(
             deactivatedOver.GetPath().AppendChild('child'))
 
@@ -361,6 +406,8 @@ class TestUsdPrim(unittest.TestCase):
         assert group.IsGroup()
         assert not group.IsAbstract()
         assert group.IsDefined()
+        assert group.HasDefiningSpecifier()
+        assert group.GetSpecifier() == Sdf.SpecifierDef
 
         # child should be loaded now.
         assert localChild.IsActive()
@@ -369,6 +416,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not localChild.IsGroup()
         assert not localChild.IsAbstract()
         assert localChild.IsDefined()
+        assert localChild.HasDefiningSpecifier()
+        assert localChild.GetSpecifier() == Sdf.SpecifierDef
 
         # undef child should be loaded and defined, due to payload inclusion.
         assert undefModelChild.IsActive()
@@ -387,6 +436,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not payloadChild.IsGroup()
         assert not payloadChild.IsAbstract()
         assert payloadChild.IsDefined()
+        assert undefModelChild.HasDefiningSpecifier()
+        assert undefModelChild.GetSpecifier() == Sdf.SpecifierDef
 
         # check deactivated scope again.
         assert not deactivatedScope.IsActive()
@@ -395,6 +446,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert not stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -406,6 +459,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -417,6 +472,8 @@ class TestUsdPrim(unittest.TestCase):
         assert not deactivatedScope.IsGroup()
         assert not deactivatedScope.IsAbstract()
         assert deactivatedScope.IsDefined()
+        assert deactivatedScope.HasDefiningSpecifier()
+        assert deactivatedScope.GetSpecifier() == Sdf.SpecifierDef
         assert not stage.GetPrimAtPath(
             deactivatedScope.GetPath().AppendChild('child'))
 
@@ -525,16 +582,17 @@ class TestUsdPrim(unittest.TestCase):
             sphereRefs = sphere.GetReferences()
             s3 = Usd.Stage.CreateNew("refTest2."+fmt)
             box = s3.DefinePrim("/Box", "Cube")
-            assert s2.ResolveIdentifierToEditTarget(
-                s1.GetRootLayer().identifier) != ""
-            assert s2.ResolveIdentifierToEditTarget("./refTest2."+fmt) != ""
-            assert s2.ResolveIdentifierToEditTarget(
-                s2.GetRootLayer().realPath) != ""
+            self.assertEqual(s2.ResolveIdentifierToEditTarget(
+                s1.GetRootLayer().identifier), s1.GetRootLayer().identifier)
+            self.assertNotEqual(s2.ResolveIdentifierToEditTarget(
+                "./refTest2."+fmt), "")
+            self.assertNotEqual(s2.ResolveIdentifierToEditTarget(
+                s2.GetRootLayer().realPath), "")
             # but paths to non-existent files fail
-            assert s2.ResolveIdentifierToEditTarget("./noFile."+fmt) == ""
-            # and paths relative to in-memory layers fail (expected errors?)
-            print("bazRefs = " + s1.ResolveIdentifierToEditTarget("./refTest2."+fmt))
-            assert s1.ResolveIdentifierToEditTarget("./refTest2."+fmt) == "" 
+            self.assertEqual(s2.ResolveIdentifierToEditTarget("./noFile."+fmt), "")
+            # paths relative to in-memory layers resolve relative to the cwd
+            # (under the default resolver)
+            self.assertNotEqual(s1.ResolveIdentifierToEditTarget("./refTest2."+fmt), "")
 
             # A good reference generates no errors or exceptions
             assert bazRefs.AddReference(s2.GetRootLayer().identifier, "/Sphere")
@@ -865,10 +923,6 @@ class TestUsdPrim(unittest.TestCase):
             self.assertTrue(prim.ComputeExpandedPrimIndex().IsValid())
             self.assertTrue(prim.ComputeExpandedPrimIndex().DumpToString())
 
-        def _ValidateNoPrimIndexes(prim):
-            self.assertFalse(prim.GetPrimIndex().IsValid())
-            self.assertFalse(prim.GetPrimIndex().DumpToString())
-
         for fmt in allFormats:
             s = _CreateTestStage(fmt)
 
@@ -876,9 +930,14 @@ class TestUsdPrim(unittest.TestCase):
             _ValidatePrimIndexes(s.GetPrimAtPath('/Ref'))
             _ValidatePrimIndexes(s.GetPrimAtPath('/Ref/Child'))
 
-            # Prototype prims do not expose a valid prim index.
+            # Prototype prims do not expose a valid prim index, but can still 
+            # be used to compute an expanded prim index which is necessary for
+            # composition queries.
             prototype = s.GetPrototypes()[0]
-            _ValidateNoPrimIndexes(prototype)
+            self.assertFalse(prototype.GetPrimIndex().IsValid())
+            self.assertFalse(prototype.GetPrimIndex().DumpToString())
+            self.assertTrue(prototype.ComputeExpandedPrimIndex().IsValid())
+            self.assertTrue(prototype.ComputeExpandedPrimIndex().DumpToString())
 
             # However, prims beneath prototypes do expose a valid prim index.
             # Note this prim index may change from run to run depending on
@@ -959,19 +1018,12 @@ class TestUsdPrim(unittest.TestCase):
 
             self.assertTrue(world.HasAPI(Usd.CollectionAPI))
 
-            # The schemaType that's passed into HasAPI must derive from 
-            # UsdAPISchemaBase and must not be UsdAPISchemaBase.
-            with self.assertRaises(RuntimeError):
-                world.HasAPI(Usd.Typed)
-            with self.assertRaises(RuntimeError):
-                world.HasAPI(Usd.APISchemaBase)
-            with self.assertRaises(RuntimeError):
-                world.HasAPI(Usd.ModelAPI)
-
-            # Try calling HasAPI a random TfType that isn't a derivative of 
-            # SchemaBase.
-            with self.assertRaises(RuntimeError):
-                world.HasAPI(Sdf.ListOpType)
+            # HasAPI always returns false (but doesn't error) for types that 
+            # aren't applied API schema types.
+            self.assertFalse(world.HasAPI(Usd.Typed))
+            self.assertFalse(world.HasAPI(Usd.APISchemaBase))
+            self.assertFalse(world.HasAPI(Usd.ModelAPI))
+            self.assertFalse(world.HasAPI(Sdf.ListOpType))
 
             self.assertEqual(['CollectionAPI:root'], world.GetAppliedSchemas())
 

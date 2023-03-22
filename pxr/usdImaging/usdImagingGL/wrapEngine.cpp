@@ -52,11 +52,11 @@ _TestIntersection(
     const UsdPrim& root, 
     UsdImagingGLRenderParams params)
 {
-    GfVec3d hitPoint;
-    GfVec3d hitNormal;
+    GfVec3d hitPoint(0);
+    GfVec3d hitNormal(0);
     SdfPath hitPrimPath;
     SdfPath hitInstancerPath;
-    int hitInstanceIndex;
+    int hitInstanceIndex = -1;
     HdInstancerContext hitInstancerContext;
 
     self.TestIntersection(
@@ -115,18 +115,12 @@ void wrapEngine()
             .def("SetRenderViewport", &UsdImagingGLEngine::SetRenderViewport)
             .def("SetCameraPath", &UsdImagingGLEngine::SetCameraPath)
             .def("SetCameraState", &UsdImagingGLEngine::SetCameraState)
-            .def("SetLightingStateFromOpenGL",
-                    &UsdImagingGLEngine::SetLightingStateFromOpenGL)
             .def("SetLightingState", &_SetLightingState)
-            .def("SetCameraStateFromOpenGL", 
-                    &UsdImagingGLEngine::SetCameraStateFromOpenGL)
             .def("SetSelected", &UsdImagingGLEngine::SetSelected)
             .def("ClearSelected", &UsdImagingGLEngine::ClearSelected)
             .def("AddSelected", &UsdImagingGLEngine::AddSelected)
             .def("SetSelectionColor", &UsdImagingGLEngine::SetSelectionColor)
             .def("TestIntersection", &_TestIntersection)
-            .def("IsHydraEnabled", &UsdImagingGLEngine::IsHydraEnabled)
-                .staticmethod("IsHydraEnabled")
             .def("IsConverged", &UsdImagingGLEngine::IsConverged)
             .def("GetRendererPlugins", &UsdImagingGLEngine::GetRendererPlugins,
                  return_value_policy< TfPySequenceToList >())
@@ -155,6 +149,13 @@ void wrapEngine()
             .def("IsColorCorrectionCapable", 
                 &UsdImagingGLEngine::IsColorCorrectionCapable)
                 .staticmethod("IsColorCorrectionCapable")
+            .def("GetRendererCommandDescriptors",
+                &UsdImagingGLEngine::GetRendererCommandDescriptors,
+                return_value_policy< TfPySequenceToList >() )
+            .def("InvokeRendererCommand",
+                &UsdImagingGLEngine::InvokeRendererCommand,
+                (boost::python::arg("command"),
+                 boost::python::arg("args") = HdCommandArgs()))
             .def("IsPauseRendererSupported", 
                 &UsdImagingGLEngine::IsPauseRendererSupported)
             .def("PauseRenderer", &UsdImagingGLEngine::PauseRenderer)

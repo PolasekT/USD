@@ -33,6 +33,7 @@
 #include "pxr/base/tf/pySingleton.h"
 
 #include <boost/python.hpp>
+#include <boost/python/enum.hpp>
 
 using std::string;
 
@@ -49,11 +50,58 @@ _WrapBuildComposedPrimDefinition(const UsdSchemaRegistry &self,
 
 void wrapUsdSchemaRegistry()
 {
-    typedef UsdSchemaRegistry This;
-    typedef TfWeakPtr<UsdSchemaRegistry> ThisPtr;
+    using SchemaInfoConstPtr = const UsdSchemaRegistry::SchemaInfo *;
+    using SchemaInfoConstPtrVector = std::vector<SchemaInfoConstPtr>;
 
-    class_<This, ThisPtr, boost::noncopyable>("SchemaRegistry", no_init)
+    using This = UsdSchemaRegistry;
+    using ThisPtr = TfWeakPtr<UsdSchemaRegistry>;
+
+    scope s = class_<This, ThisPtr, boost::noncopyable>("SchemaRegistry", no_init)
         .def(TfPySingleton())
+        .def("ParseSchemaFamilyAndVersionFromIdentifier",
+             &This::ParseSchemaFamilyAndVersionFromIdentifier,
+             (arg("schemaIdentifier")),
+             return_value_policy<TfPyPairToTuple>())
+        .staticmethod("ParseSchemaFamilyAndVersionFromIdentifier")
+        .def("MakeSchemaIdentifierForFamilyAndVersion",
+             &This::MakeSchemaIdentifierForFamilyAndVersion,
+             (arg("schemaFamily"), arg("schemaVersion")))
+        .staticmethod("MakeSchemaIdentifierForFamilyAndVersion")
+
+        .def("IsAllowedSchemaFamily", &This::IsAllowedSchemaFamily,
+             arg("schemaFamily"))
+        .staticmethod("IsAllowedSchemaFamily")
+        .def("IsAllowedSchemaIdentifier", &This::IsAllowedSchemaIdentifier,
+             arg("schemaIdentifier"))
+        .staticmethod("IsAllowedSchemaIdentifier")
+
+        .def("FindSchemaInfo", 
+             (SchemaInfoConstPtr(*)(const TfType &)) &This::FindSchemaInfo,
+             (arg("schemaType")),
+             return_internal_reference<>())
+        .def("FindSchemaInfo", 
+             (SchemaInfoConstPtr(*)(const TfToken &)) &This::FindSchemaInfo,
+             (arg("schemaIdentifier")),
+             return_internal_reference<>())
+        .def("FindSchemaInfo", 
+             (SchemaInfoConstPtr(*)(const TfToken &, UsdSchemaVersion)) 
+             &This::FindSchemaInfo,
+             (arg("schemaFamily"), arg("schemaVersion")),
+             return_internal_reference<>())
+        .staticmethod("FindSchemaInfo")
+
+        .def("FindSchemaInfosInFamily", 
+             (const SchemaInfoConstPtrVector &(*)(const TfToken &))
+             &This::FindSchemaInfosInFamily,
+             arg("schemaFamily"),
+             return_value_policy<TfPySequenceToList>())
+        .def("FindSchemaInfosInFamily",
+             (SchemaInfoConstPtrVector(*)(
+                 const TfToken &, UsdSchemaVersion, This::VersionPolicy))
+             &This::FindSchemaInfosInFamily,
+             (arg("schemaFamily"), arg("schemaVersion"), arg("versionPolicy")),
+             return_value_policy<TfPySequenceToList>())
+        .staticmethod("FindSchemaInfosInFamily")
 
         .def("GetSchemaTypeName",
              (TfToken (*)(const TfType &)) &This::GetSchemaTypeName,
@@ -107,6 +155,14 @@ void wrapUsdSchemaRegistry()
              (arg("primType")))
         .staticmethod("IsConcrete")
 
+        .def("IsAbstract",
+             (bool (*)(const TfType &)) &This::IsAbstract,
+             (arg("primType")))
+        .def("IsAbstract",
+             (bool (*)(const TfToken&)) &This::IsAbstract,
+             (arg("primType")))
+        .staticmethod("IsAbstract")
+
         .def("IsAppliedAPISchema", 
              (bool (*)(const TfType &)) &This::IsAppliedAPISchema,
              (arg("apiSchemaType")))
@@ -127,16 +183,46 @@ void wrapUsdSchemaRegistry()
             (arg("typeName")))
         .staticmethod("GetTypeFromName")
 
-        .def("GetTypeAndInstance", &This::GetTypeAndInstance,
+        .def("GetTypeNameAndInstance", &This::GetTypeNameAndInstance,
             (arg("typeName")), return_value_policy<TfPyPairToTuple>())
-        .staticmethod("GetTypeAndInstance")
+        .staticmethod("GetTypeNameAndInstance")
+
+        .def("IsAllowedAPISchemaInstanceName", 
+             &This::IsAllowedAPISchemaInstanceName,
+             (arg("apiSchemaName"), arg("instanceName")))
+        .staticmethod("IsAllowedAPISchemaInstanceName")
+
+        .def("GetAPISchemaCanOnlyApplyToTypeNames", 
+             &This::GetAPISchemaCanOnlyApplyToTypeNames,
+             (arg("apiSchemaName"), arg("instanceName")=TfToken()),
+             return_value_policy<TfPySequenceToList>())
+        .staticmethod("GetAPISchemaCanOnlyApplyToTypeNames")
 
         .def("GetAutoApplyAPISchemas", &This::GetAutoApplyAPISchemas,
              return_value_policy<TfPyMapToDictionary>())
         .staticmethod("GetAutoApplyAPISchemas")
 
-        .def("GetPropertyNamespacePrefix", &This::GetPropertyNamespacePrefix, 
-            (arg("multiApplyAPISchemaName")))
+        .def("MakeMultipleApplyNameTemplate", 
+             &This::MakeMultipleApplyNameTemplate,
+             arg("namespacePrefix"),
+             arg("baseName"))
+        .staticmethod("MakeMultipleApplyNameTemplate")
+
+        .def("MakeMultipleApplyNameInstance", 
+             &This::MakeMultipleApplyNameInstance,
+             arg("nameTemplate"),
+             arg("instanceName"))
+        .staticmethod("MakeMultipleApplyNameInstance")
+
+        .def("GetMultipleApplyNameTemplateBaseName", 
+             &This::GetMultipleApplyNameTemplateBaseName,
+             arg("nameTemplate"))
+        .staticmethod("GetMultipleApplyNameTemplateBaseName")
+
+        .def("IsMultipleApplyNameTemplate", 
+             &This::IsMultipleApplyNameTemplate,
+             arg("nameTemplate"))
+        .staticmethod("IsMultipleApplyNameTemplate")
 
         .def("FindConcretePrimDefinition", 
              &This::FindConcretePrimDefinition,
@@ -159,4 +245,29 @@ void wrapUsdSchemaRegistry()
         .def("GetFallbackPrimTypes", &This::GetFallbackPrimTypes, 
              return_value_policy<return_by_value>())
         ;
+
+    // Need to convert TfToken properties of SchemaInfo to string
+    // to wrap them to python
+    auto wrapIdentifier = +[](const This::SchemaInfo &schemaInfo) {
+        return schemaInfo.identifier.GetString();
+    };
+    auto wrapFamily = +[](const This::SchemaInfo &schemaInfo) {
+        return schemaInfo.family.GetString();
+    };
+
+    class_<This::SchemaInfo>("SchemaInfo", no_init)
+        .add_property("identifier", wrapIdentifier)
+        .def_readonly("type", &This::SchemaInfo::type)
+        .add_property("family", wrapFamily)
+        .def_readonly("version", &This::SchemaInfo::version)
+        .def_readonly("kind", &This::SchemaInfo::kind)
+        ;
+
+    enum_<UsdSchemaRegistry::VersionPolicy>("VersionPolicy")
+        .value("All", UsdSchemaRegistry::VersionPolicy::All)
+        .value("GreaterThan", UsdSchemaRegistry::VersionPolicy::GreaterThan)
+        .value("GreaterThanOrEqual", UsdSchemaRegistry::VersionPolicy::GreaterThanOrEqual)
+        .value("LessThan", UsdSchemaRegistry::VersionPolicy::LessThan)
+        .value("LessThanOrEqual", UsdSchemaRegistry::VersionPolicy::LessThanOrEqual)
+    ;    
 }

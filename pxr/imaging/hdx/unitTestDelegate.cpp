@@ -24,13 +24,17 @@
 #include "pxr/imaging/hdx/unitTestDelegate.h"
 
 #include "pxr/base/gf/frustum.h"
+#include "pxr/base/tf/scoped.h"
 
 #include "pxr/imaging/hd/engine.h"
 #include "pxr/imaging/hd/mesh.h"
 #include "pxr/imaging/hd/sprim.h"
-
 #include "pxr/imaging/hd/camera.h"
+#include "pxr/imaging/hd/renderBuffer.h"
+
+#include "pxr/imaging/hdSt/hioConversions.h"
 #include "pxr/imaging/hdSt/drawTarget.h"
+#include "pxr/imaging/hdSt/light.h"
 #include "pxr/imaging/hdSt/light.h"
 
 #include "pxr/imaging/hdx/drawTargetTask.h"
@@ -41,7 +45,11 @@
 #include "pxr/imaging/hdx/shadowTask.h"
 #include "pxr/imaging/hdx/shadowMatrixComputation.h"
 
+#include "pxr/imaging/hio/image.h"
+
 #include "pxr/imaging/pxOsd/tokens.h"
+
+#include "pxr/base/gf/camera.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -112,8 +120,9 @@ private:
 }
 
 // ------------------------------------------------------------------------
-Hdx_UnitTestDelegate::Hdx_UnitTestDelegate(HdRenderIndex *index)
-    : HdSceneDelegate(index, SdfPath::AbsoluteRootPath())
+Hdx_UnitTestDelegate::Hdx_UnitTestDelegate(HdRenderIndex *index, 
+                                           SdfPath const& delegateId)
+    : HdSceneDelegate(index, delegateId)
     , _refineLevel(0)
 {
     // add camera
@@ -148,15 +157,48 @@ Hdx_UnitTestDelegate::SetCamera(GfMatrix4d const &viewMatrix,
     SetCamera(_cameraId, viewMatrix, projMatrix);
 }
 
+static
+HdCamera::Projection
+_ToHd(const GfCamera::Projection projection)
+{
+    switch(projection) {
+    case GfCamera::Perspective:
+        return HdCamera::Perspective;
+    case GfCamera::Orthographic:
+        return HdCamera::Orthographic;
+    }
+    TF_CODING_ERROR("Bad GfCamera::Projection value");
+    return HdCamera::Perspective;
+}
+
 void
 Hdx_UnitTestDelegate::SetCamera(SdfPath const &cameraId,
                                 GfMatrix4d const &viewMatrix,
                                 GfMatrix4d const &projMatrix)
 {
+    GfCamera cam;
+    cam.SetFromViewAndProjectionMatrix(viewMatrix,
+                                       projMatrix);
+
+    _cameraTransforms[cameraId] = cam.GetTransform();
+
     _ValueCache &cache = _valueCacheMap[cameraId];
-    cache[HdCameraTokens->windowPolicy] = VtValue(CameraUtilFit);
-    cache[HdCameraTokens->worldToViewMatrix] = VtValue(viewMatrix);
-    cache[HdCameraTokens->projectionMatrix] = VtValue(projMatrix);
+    cache[HdCameraTokens->projection] = VtValue(_ToHd(cam.GetProjection()));
+    cache[HdCameraTokens->focalLength] = VtValue(
+        cam.GetFocalLength() * float(GfCamera::FOCAL_LENGTH_UNIT));
+    cache[HdCameraTokens->horizontalAperture] = VtValue(
+        cam.GetHorizontalAperture() * float(GfCamera::APERTURE_UNIT));
+    cache[HdCameraTokens->verticalAperture] = VtValue(
+        cam.GetVerticalAperture() * float(GfCamera::APERTURE_UNIT));
+    cache[HdCameraTokens->horizontalApertureOffset] = VtValue(
+        cam.GetHorizontalApertureOffset() * float(GfCamera::APERTURE_UNIT));
+    cache[HdCameraTokens->verticalApertureOffset] = VtValue(
+        cam.GetVerticalApertureOffset() * float(GfCamera::APERTURE_UNIT));
+    cache[HdCameraTokens->clippingRange] = VtValue(
+        cam.GetClippingRange());
+
+    cache[HdCameraTokens->windowPolicy] = VtValue(
+        CameraUtilFit);
 
     GetRenderIndex().GetChangeTracker().MarkSprimDirty(cameraId,
                                                        HdCamera::AllDirty);
@@ -169,8 +211,17 @@ Hdx_UnitTestDelegate::AddCamera(SdfPath const &id)
     GetRenderIndex().InsertSprim(HdPrimTypeTokens->camera, this, id);
     _ValueCache &cache = _valueCacheMap[id];
     cache[HdCameraTokens->windowPolicy] = VtValue(CameraUtilFit);
-    cache[HdCameraTokens->worldToViewMatrix] = VtValue(GfMatrix4d(1.0));
-    cache[HdCameraTokens->projectionMatrix] = VtValue(GfMatrix4d(1.0));
+}
+
+void
+Hdx_UnitTestDelegate::UpdateCamera(SdfPath const &id,
+                                   TfToken const &key,
+                                   VtValue value)
+{
+    _ValueCache &cache = _valueCacheMap[id];
+    cache[key] = value;
+    HdChangeTracker& tracker = GetRenderIndex().GetChangeTracker();
+    tracker.MarkSprimDirty(id, HdCamera::AllDirty);
 }
 
 void
@@ -222,6 +273,49 @@ Hdx_UnitTestDelegate::SetLight(SdfPath const &id, TfToken const &key,
 }
 
 void
+Hdx_UnitTestDelegate::RemoveLight(SdfPath const &id)
+{
+    // remove light
+    GetRenderIndex().RemoveSprim(HdPrimTypeTokens->simpleLight, id);
+    _valueCacheMap.erase(id);
+}
+
+void
+Hdx_UnitTestDelegate::UpdateTransform(SdfPath const& id,
+                                      GfMatrix4f const& mat)
+{
+    if(_meshes.find(id) != _meshes.end()) {
+        _meshes[id].transform = GfMatrix4d(mat);
+        HdChangeTracker& tracker = GetRenderIndex().GetChangeTracker();
+        tracker.MarkRprimDirty(id, HdChangeTracker::DirtyTransform);
+    }
+    if (_cameraTransforms.find(id) != _cameraTransforms.end()) {
+        _cameraTransforms[id] = GfMatrix4d(mat);
+        HdChangeTracker& tracker = GetRenderIndex().GetChangeTracker();
+        tracker.MarkSprimDirty(id, HdChangeTracker::DirtyTransform);
+    }        
+}
+
+void
+Hdx_UnitTestDelegate::AddRenderBuffer(SdfPath const &id,
+                                      HdRenderBufferDescriptor const &desc)
+{
+    GetRenderIndex().InsertBprim(HdPrimTypeTokens->renderBuffer, this, id);
+
+    _ValueCache &cache = _valueCacheMap[id];
+    cache[_tokens->renderBufferDescriptor] = desc;
+}
+
+void
+Hdx_UnitTestDelegate::UpdateRenderBuffer(SdfPath const &id,
+                                         HdRenderBufferDescriptor const &desc)
+{
+    _ValueCache &cache = _valueCacheMap[id];
+    cache[_tokens->renderBufferDescriptor] = desc;
+    GetRenderIndex().GetChangeTracker().MarkBprimDirty(id, HdRenderBuffer::DirtyDescription);
+}
+
+void
 Hdx_UnitTestDelegate::AddDrawTarget(SdfPath const &id)
 {
     GetRenderIndex().InsertSprim(HdPrimTypeTokens->drawTarget, this, id);
@@ -233,16 +327,13 @@ Hdx_UnitTestDelegate::AddDrawTarget(SdfPath const &id)
         const TfToken attachmentName("color");
         
         const SdfPath path = id.AppendProperty(attachmentName);
-        GetRenderIndex().InsertBprim(
-            HdPrimTypeTokens->renderBuffer, this, path);
         
         HdRenderBufferDescriptor desc;
         desc.dimensions = GfVec3i(256, 256, 1);
         desc.format = HdFormatUNorm8Vec4;
         desc.multiSampled = true;
-        
-        _ValueCache &cache = _valueCacheMap[path];
-        cache[_tokens->renderBufferDescriptor] = desc;
+
+        AddRenderBuffer(path, desc);
         
         HdRenderPassAovBinding aovBinding;
         aovBinding.aovName = attachmentName;
@@ -255,16 +346,13 @@ Hdx_UnitTestDelegate::AddDrawTarget(SdfPath const &id)
         const TfToken attachmentName("depth");
         
         const SdfPath path = id.AppendProperty(attachmentName);
-        GetRenderIndex().InsertBprim(
-            HdPrimTypeTokens->renderBuffer, this, path);
         
         HdRenderBufferDescriptor desc;
         desc.dimensions = GfVec3i(256, 256, 1);
         desc.format = HdFormatFloat32;
         desc.multiSampled = true;
-        
-        _ValueCache &cache = _valueCacheMap[path];
-        cache[_tokens->renderBufferDescriptor] = desc;
+
+        AddRenderBuffer(path, desc);
         
         HdRenderPassAovBinding aovBinding;
         aovBinding.aovName = attachmentName;
@@ -715,6 +803,9 @@ Hdx_UnitTestDelegate::GetTransform(SdfPath const & id)
     if(_meshes.find(id) != _meshes.end()) {
         return _meshes[id].transform;
     }
+    if (_cameraTransforms.find(id) != _cameraTransforms.end()) {
+        return _cameraTransforms[id];
+    }
     return GfMatrix4d(1);
 }
 
@@ -801,6 +892,18 @@ Hdx_UnitTestDelegate::GetInstanceIndices(SdfPath const& instancerId,
         }
     }
     return indices;
+}
+
+/*virtual*/
+SdfPathVector
+Hdx_UnitTestDelegate::GetInstancerPrototypes(SdfPath const& instancerId)
+{
+    HD_TRACE_FUNCTION();
+
+    if (_Instancer *instancer = TfMapLookupPtr(_instancers, instancerId)) {
+        return instancer->prototypes;
+    }
+    return SdfPathVector();
 }
 
 /*virtual*/
@@ -945,6 +1048,56 @@ Hdx_UnitTestDelegate::GetTaskRenderTags(SdfPath const& taskId)
     return it2->second.Get<TfTokenVector>();
 }
 
+bool
+Hdx_UnitTestDelegate::WriteRenderBufferToFile(SdfPath const &id,
+                                              std::string const &filePath)
+{
+    HdBprim * const prim = GetRenderIndex().GetBprim(
+        HdPrimTypeTokens->renderBuffer, id);
+    HdRenderBuffer * const renderBuffer = dynamic_cast<HdRenderBuffer*>(prim);
+    if (!renderBuffer) {
+        TF_CODING_ERROR("No HdRenderBuffer prim at path %s",
+                        id.GetText());
+        return false;
+    }
+
+    HioImage::StorageSpec storage;
+    storage.width = renderBuffer->GetWidth();
+    storage.height = renderBuffer->GetHeight();
+    storage.format =
+        HdStHioConversions::GetHioFormat(renderBuffer->GetFormat());
+    storage.flipped = true;
+    storage.data = renderBuffer->Map();
+    TfScoped<> scopedUnmap([renderBuffer](){ renderBuffer->Unmap(); });
+
+    if (storage.format == HioFormatInvalid) {
+        TF_CODING_ERROR("Render buffer %s has format not corresponding to a"
+                        "HioFormat",
+                        id.GetText());
+        return false;
+    }
+
+    if (!storage.data) {
+        TF_CODING_ERROR("No data for render buffer %s",
+                        id.GetText());
+        return false;
+    }
+    
+    HioImageSharedPtr const image = HioImage::OpenForWriting(filePath);
+    if (!image) {
+        TF_RUNTIME_ERROR("Failed toopen image for writing %s",
+                         filePath.c_str());
+        return false;
+    }
+
+    if (!image->Write(storage)) {
+        TF_RUNTIME_ERROR("Failed to write image to %s",
+                         filePath.c_str());
+        return false;
+    }
+
+    return true;
+}
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

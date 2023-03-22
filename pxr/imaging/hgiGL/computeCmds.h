@@ -33,6 +33,8 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+struct HgiComputeCmdsDesc;
+
 /// \class HgiGLComputeCmds
 ///
 /// OpenGL implementation of HgiComputeCmds.
@@ -66,13 +68,16 @@ public:
     void Dispatch(int dimX, int dimY) override;
 
     HGIGL_API
-    void MemoryBarrier(HgiMemoryBarrier barrier) override;
+    void InsertMemoryBarrier(HgiMemoryBarrier barrier) override;
+
+    HGIGL_API
+    HgiComputeDispatch GetDispatchMethod() const override;
 
 protected:
     friend class HgiGL;
 
     HGIGL_API
-    HgiGLComputeCmds(HgiGLDevice* device);
+    HgiGLComputeCmds(HgiGLDevice* device, HgiComputeCmdsDesc const& desc);
 
     HGIGL_API
     bool _Submit(Hgi* hgi, HgiSubmitWaitType wait) override;
@@ -84,6 +89,7 @@ private:
 
     HgiGLOpsVector _ops;
     int _pushStack;
+    GfVec3i _localWorkGroupSize;
 
     // Cmds is used only one frame so storing multi-frame state on will not
     // survive.

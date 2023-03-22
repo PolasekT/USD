@@ -449,6 +449,9 @@ _AddStandardTypesToRegistry(Sdf_ValueTypeRegistry* r)
     r->AddType(T("string", std::string()).CPPTypeName("std::string"));
     r->AddType(T("token",  TfToken()));
     r->AddType(T("asset",  SdfAssetPath()));
+    r->AddType(T("opaque", SdfOpaqueValue()).NoArrays());
+    r->AddType(T("group",  SdfOpaqueValue())
+               .NoArrays().Role(SdfValueRoleNames->Group));
 
     // Compound types.
     r->AddType(T("double2",  GfVec2d(0.0)).Dimensions(2));
@@ -871,6 +874,8 @@ SdfSchemaBase::_RegisterStandardFields()
         .MetadataField(SdfFieldKeys->CustomData,
                        SdfMetadataDisplayGroupTokens->core)
         .MetadataField(SdfFieldKeys->DisplayGroupOrder,
+                       SdfMetadataDisplayGroupTokens->core)
+        .MetadataField(SdfFieldKeys->DisplayName,
                        SdfMetadataDisplayGroupTokens->core)
         .MetadataField(SdfFieldKeys->Documentation,
                        SdfMetadataDisplayGroupTokens->core)
@@ -1378,6 +1383,20 @@ SdfSchemaBase::IsValidSubLayer(const std::string& sublayer)
         return SdfAllowed("Sublayer paths must not be empty");
     }
 
+    // 'sublayer' must be a valid asset path as well, attempt to construct one
+    // to check.
+    TfErrorMark m;
+    SdfAssetPath test(sublayer);
+    if (!m.IsClean()) {
+        std::vector<std::string> errs;
+        for (TfError const &err: m) {
+            errs.push_back(err.GetCommentary());
+        }
+        m.Clear();
+        return SdfAllowed(
+            TfStringPrintf("Invalid sublayer path: %s",
+                           TfStringJoin(errs, "; ").c_str()));
+    }
     return true;
 }
 
@@ -1453,7 +1472,7 @@ _ParseValue(const std::string &valueTypeName, const JsValue &value,
 
     // Feed the ParserValueContext the values in the correct format.
     // A better solution would be to have the default value be a string,
-    // which is parsed using the menva file format syntax for typed values.
+    // which is parsed using the sdf text file format syntax for typed values.
     // This would involve extracting the typed value rule out of the parser
     // and into a new parser.
     if (context.valueIsShaped)
@@ -1809,6 +1828,8 @@ Sdf_InitializeValueTypeNames()
     n->String        = r.FindType("string");
     n->Token         = r.FindType("token");
     n->Asset         = r.FindType("asset");
+    n->Opaque        = r.FindType("opaque");
+    n->Group         = r.FindType("group");
     n->Int2          = r.FindType("int2");
     n->Int3          = r.FindType("int3");
     n->Int4          = r.FindType("int4");

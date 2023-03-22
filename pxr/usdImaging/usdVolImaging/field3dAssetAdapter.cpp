@@ -23,6 +23,7 @@
 //
 #include "pxr/usdImaging/usdVolImaging/field3dAssetAdapter.h"
 
+#include "pxr/usdImaging/usdVolImaging/dataSourceFieldAsset.h"
 #include "pxr/usdImaging/usdVolImaging/tokens.h"
 
 #include "pxr/usd/usdVol/tokens.h"
@@ -39,6 +40,38 @@ TF_REGISTRY_FUNCTION(TfType)
 }
 
 UsdImagingField3DAssetAdapter::~UsdImagingField3DAssetAdapter() = default;
+
+TfTokenVector
+UsdImagingField3DAssetAdapter::GetImagingSubprims(UsdPrim const& prim)
+{
+    return { TfToken() };
+}
+
+TfToken
+UsdImagingField3DAssetAdapter::GetImagingSubprimType(
+        UsdPrim const& prim,
+        TfToken const& subprim)
+{
+    if (subprim.IsEmpty()) {
+        return UsdVolImagingTokens->field3dAsset;
+    }
+    return TfToken();
+}
+
+HdContainerDataSourceHandle
+UsdImagingField3DAssetAdapter::GetImagingSubprimData(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        const UsdImagingDataSourceStageGlobals &stageGlobals)
+{
+    if (subprim.IsEmpty()) {
+        return UsdImagingDataSourceFieldAssetPrim::New(
+            prim.GetPath(),
+            prim,
+            stageGlobals);
+    }
+    return nullptr;
+}
 
 VtValue
 UsdImagingField3DAssetAdapter::Get(

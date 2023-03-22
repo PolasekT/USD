@@ -28,13 +28,14 @@
 
 #include "pxr/imaging/hdx/api.h"
 #include "pxr/imaging/hd/types.h"
-#include "pxr/base/gf/vec2i.h"
+#include "pxr/base/gf/vec4i.h"
 #include "pxr/imaging/hgi/buffer.h"
 #include "pxr/imaging/hgi/graphicsPipeline.h"
 #include "pxr/imaging/hgi/resourceBindings.h"
 #include "pxr/imaging/hgi/shaderProgram.h"
 #include "pxr/imaging/hgi/texture.h"
 
+#include <map>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -115,6 +116,13 @@ public:
         HgiBlendFactor dstAlphaBlendFactor,
         HgiBlendOp alphaBlendOp);
 
+    /// By default HdxFullscreenShader uses LoadOpDontCare and StoreOpStore.
+    /// This function allows you to override the attachment load and store op.
+    HDX_API
+    void SetAttachmentLoadStoreOp(
+        HgiAttachmentLoadOp attachmentLoadOp,
+        HgiAttachmentStoreOp attachmentStoreOp);
+
     /// Provide the shader constant values (uniforms).
     /// The data values are copied, so you do not have to set them
     /// each frame if they do not change in value.
@@ -128,6 +136,13 @@ public:
     HDX_API
     void Draw(HgiTextureHandle const& colorDst,
               HgiTextureHandle const& depthDst);
+
+    HDX_API
+    void Draw(HgiTextureHandle const& colorDst,
+              HgiTextureHandle const& colorResolveDst,
+              HgiTextureHandle const& depthDst,
+              HgiTextureHandle const& depthResolveDst,
+              GfVec4i const& viewport);
 
 private:
     HdxFullscreenShader() = delete;
@@ -157,10 +172,14 @@ private:
     bool _CreateSampler();
 
     // Internal draw method
-    void _Draw(TextureMap const& textures, 
-              HgiTextureHandle const& colorDst,
-              HgiTextureHandle const& depthDst,
-              bool depthWrite);
+    void _Draw(
+        TextureMap const& textures, 
+        HgiTextureHandle const& colorDst,
+        HgiTextureHandle const& colorResolveDst,
+        HgiTextureHandle const& depthDst,
+        HgiTextureHandle const& depthResolveDst,
+        GfVec4i const &viewport,
+        bool depthWrite);
     
     static HgiShaderFunctionDesc GetFullScreenVertexDesc();
 
@@ -194,6 +213,9 @@ private:
     HgiBlendFactor _srcAlphaBlendFactor;
     HgiBlendFactor _dstAlphaBlendFactor;
     HgiBlendOp _alphaBlendOp;
+
+    HgiAttachmentLoadOp _attachmentLoadOp;
+    HgiAttachmentStoreOp _attachmentStoreOp;
 
     HgiAttachmentDesc _attachment0;
     HgiAttachmentDesc _depthAttachment;

@@ -66,38 +66,39 @@ UsdContrivedEmptyMultipleApplyAPI::Get(const UsdPrim &prim, const TfToken &name)
     return UsdContrivedEmptyMultipleApplyAPI(prim, name);
 }
 
+/* static */
+std::vector<UsdContrivedEmptyMultipleApplyAPI>
+UsdContrivedEmptyMultipleApplyAPI::GetAll(const UsdPrim &prim)
+{
+    std::vector<UsdContrivedEmptyMultipleApplyAPI> schemas;
+    
+    for (const auto &schemaName :
+         UsdAPISchemaBase::_GetMultipleApplyInstanceNames(prim, _GetStaticTfType())) {
+        schemas.emplace_back(prim, schemaName);
+    }
+
+    return schemas;
+}
+
 
 /* virtual */
-UsdSchemaKind UsdContrivedEmptyMultipleApplyAPI::_GetSchemaKind() const {
+UsdSchemaKind UsdContrivedEmptyMultipleApplyAPI::_GetSchemaKind() const
+{
     return UsdContrivedEmptyMultipleApplyAPI::schemaKind;
 }
 
-/* virtual */
-UsdSchemaKind UsdContrivedEmptyMultipleApplyAPI::_GetSchemaType() const {
-    return UsdContrivedEmptyMultipleApplyAPI::schemaType;
+/* static */
+bool
+UsdContrivedEmptyMultipleApplyAPI::CanApply(
+    const UsdPrim &prim, const TfToken &name, std::string *whyNot)
+{
+    return prim.CanApplyAPI<UsdContrivedEmptyMultipleApplyAPI>(name, whyNot);
 }
 
 /* static */
 UsdContrivedEmptyMultipleApplyAPI
 UsdContrivedEmptyMultipleApplyAPI::Apply(const UsdPrim &prim, const TfToken &name)
 {
-    // Ensure that the instance name is valid.
-    TfTokenVector tokens = SdfPath::TokenizeIdentifierAsTokens(name);
-
-    if (tokens.empty()) {
-        TF_CODING_ERROR("Invalid EmptyMultipleApplyAPI name '%s'.", 
-                        name.GetText());
-        return UsdContrivedEmptyMultipleApplyAPI();
-    }
-
-    const TfToken &baseName = tokens.back();
-    if (IsSchemaPropertyBaseName(baseName)) {
-        TF_CODING_ERROR("Invalid EmptyMultipleApplyAPI name '%s'. "
-                        "The base-name '%s' is a schema property name.", 
-                        name.GetText(), baseName.GetText());
-        return UsdContrivedEmptyMultipleApplyAPI();
-    }
-
     if (prim.ApplyAPI<UsdContrivedEmptyMultipleApplyAPI>(name)) {
         return UsdContrivedEmptyMultipleApplyAPI(prim, name);
     }
@@ -129,8 +130,7 @@ UsdContrivedEmptyMultipleApplyAPI::_GetTfType() const
 
 /*static*/
 const TfTokenVector&
-UsdContrivedEmptyMultipleApplyAPI::GetSchemaAttributeNames(
-    bool includeInherited, const TfToken instanceName)
+UsdContrivedEmptyMultipleApplyAPI::GetSchemaAttributeNames(bool includeInherited)
 {
     static TfTokenVector localNames;
     static TfTokenVector allNames =
@@ -140,6 +140,24 @@ UsdContrivedEmptyMultipleApplyAPI::GetSchemaAttributeNames(
         return allNames;
     else
         return localNames;
+}
+
+/*static*/
+TfTokenVector
+UsdContrivedEmptyMultipleApplyAPI::GetSchemaAttributeNames(
+    bool includeInherited, const TfToken &instanceName)
+{
+    const TfTokenVector &attrNames = GetSchemaAttributeNames(includeInherited);
+    if (instanceName.IsEmpty()) {
+        return attrNames;
+    }
+    TfTokenVector result;
+    result.reserve(attrNames.size());
+    for (const TfToken &attrName : attrNames) {
+        result.push_back(
+            UsdSchemaRegistry::MakeMultipleApplyNameInstance(attrName, instanceName));
+    }
+    return result;
 }
 
 }}}

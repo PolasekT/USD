@@ -211,11 +211,11 @@ public:
     
     DataType *operator -> () const {
         DataType *ptr = _FetchPointer();
-        if (ARCH_LIKELY(ptr)) {
+        if (ptr) {
             return ptr;
         }
-        static const TfCallContext ctx(TF_CALL_CONTEXT);
-        Tf_PostNullSmartPtrDereferenceFatalError(ctx, typeid(Derived));
+        Tf_PostNullSmartPtrDereferenceFatalError(
+            TF_CALL_CONTEXT, typeid(Derived).name());
     }
 
     DataType &operator * () const {
@@ -363,9 +363,9 @@ ToPtr TfConst_cast(TfWeakPtrFacade<X, Y> const &p) {
 template <class T>
 template <template <class> class X, class U>
 inline TfRefPtr<T>::TfRefPtr(const TfWeakPtrFacade<X, U>& p,
-                             typename boost::enable_if<
-                                 boost::is_convertible<U*, T*>
-                             >::type *dummy)
+                             typename std::enable_if<
+                                 std::is_convertible<U*, T*>::value
+                             >::type *)
     : _refBase(get_pointer(p))
 {
     _AddRef();

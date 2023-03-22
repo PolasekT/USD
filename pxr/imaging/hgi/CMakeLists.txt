@@ -11,13 +11,17 @@ pxr_library(hgi
         attachmentDesc
         blitCmds
         buffer
+        capabilities
         cmds
         computeCmds
+        computeCmdsDesc
         computePipeline
+        debugCodes
         graphicsCmds
         graphicsCmdsDesc
         graphicsPipeline
         hgi
+        indirectCommandEncoder
         resourceBindings
         sampler
         shaderFunction

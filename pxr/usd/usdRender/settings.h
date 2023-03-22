@@ -33,9 +33,6 @@
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdRender/tokens.h"
 
-#include "pxr/base/gf/frustum.h"
-
-
 #include "pxr/base/vt/value.h"
 
 #include "pxr/base/gf/vec3d.h"
@@ -60,6 +57,11 @@ class SdfAssetPath;
 /// that should result, and the UsdGeomImageable purposes that should
 /// be rendered.  \ref UsdRenderHowSettingsAffectRendering
 ///
+/// For any described attribute \em Fallback \em Value or \em Allowed \em Values below
+/// that are text/tokens, the actual token is published and defined in \ref UsdRenderTokens.
+/// So to set an attribute to the value "rightHanded", use UsdRenderTokens->rightHanded
+/// as the value.
+///
 class UsdRenderSettings : public UsdRenderSettingsBase
 {
 public:
@@ -67,11 +69,6 @@ public:
     ///
     /// \sa UsdSchemaKind
     static const UsdSchemaKind schemaKind = UsdSchemaKind::ConcreteTyped;
-
-    /// \deprecated
-    /// Same as schemaKind, provided to maintain temporary backward 
-    /// compatibility with older generated schemas.
-    static const UsdSchemaKind schemaType = UsdSchemaKind::ConcreteTyped;
 
     /// Construct a UsdRenderSettings on UsdPrim \p prim .
     /// Equivalent to UsdRenderSettings::Get(prim.GetStage(), prim.GetPath())
@@ -147,12 +144,6 @@ protected:
     USDRENDER_API
     UsdSchemaKind _GetSchemaKind() const override;
 
-    /// \deprecated
-    /// Same as _GetSchemaKind, provided to maintain temporary backward 
-    /// compatibility with older generated schemas.
-    USDRENDER_API
-    UsdSchemaKind _GetSchemaType() const override;
-
 private:
     // needs to invoke _GetStaticTfType.
     friend class UsdSchemaRegistry;
@@ -216,6 +207,31 @@ public:
     /// the default for \p writeSparsely is \c false.
     USDRENDER_API
     UsdAttribute CreateMaterialBindingPurposesAttr(VtValue const &defaultValue = VtValue(), bool writeSparsely=false) const;
+
+public:
+    // --------------------------------------------------------------------- //
+    // RENDERINGCOLORSPACE 
+    // --------------------------------------------------------------------- //
+    /// Describes a renderer's working (linear) colorSpace where all
+    /// the renderer/shader math is expected to happen. When no
+    /// renderingColorSpace is provided, renderer should use its own default.
+    ///
+    /// | ||
+    /// | -- | -- |
+    /// | Declaration | `uniform token renderingColorSpace` |
+    /// | C++ Type | TfToken |
+    /// | \ref Usd_Datatypes "Usd Type" | SdfValueTypeNames->Token |
+    /// | \ref SdfVariability "Variability" | SdfVariabilityUniform |
+    USDRENDER_API
+    UsdAttribute GetRenderingColorSpaceAttr() const;
+
+    /// See GetRenderingColorSpaceAttr(), and also 
+    /// \ref Usd_Create_Or_Get_Property for when to use Get vs Create.
+    /// If specified, author \p defaultValue as the attribute's default,
+    /// sparsely (when it makes sense to do so) if \p writeSparsely is \c true -
+    /// the default for \p writeSparsely is \c false.
+    USDRENDER_API
+    UsdAttribute CreateRenderingColorSpaceAttr(VtValue const &defaultValue = VtValue(), bool writeSparsely=false) const;
 
 public:
     // --------------------------------------------------------------------- //

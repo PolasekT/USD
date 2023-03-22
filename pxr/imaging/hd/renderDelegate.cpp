@@ -164,6 +164,21 @@ HdRenderDelegate::GetRenderSettingsVersion() const
     return _settingsVersion;
 }
 
+HdCommandDescriptors 
+HdRenderDelegate::GetCommandDescriptors() const
+{
+    return HdCommandDescriptors();
+}
+
+bool 
+HdRenderDelegate::InvokeCommand(
+    const TfToken &command,
+    const HdCommandArgs &args)
+{
+    // Fail all commands that get here.
+    return false;
+}
+
 VtDictionary 
 HdRenderDelegate::GetRenderStats() const
 {
@@ -195,6 +210,12 @@ HdRenderDelegate::IsPauseSupported() const
 }
 
 bool
+HdRenderDelegate::IsPaused() const
+{
+    return false;
+}
+
+bool
 HdRenderDelegate::Pause()
 {
     return false;
@@ -213,9 +234,15 @@ HdRenderDelegate::IsStopSupported() const
 }
 
 bool
-HdRenderDelegate::Stop()
+HdRenderDelegate::IsStopped() const
 {
-    return false;
+    return true;
+}
+
+bool
+HdRenderDelegate::Stop(bool blocking)
+{
+    return true;
 }
 
 bool

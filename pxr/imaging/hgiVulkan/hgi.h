@@ -29,6 +29,7 @@
 #include "pxr/imaging/hgi/tokens.h"
 
 #include "pxr/imaging/hgiVulkan/api.h"
+#include "pxr/imaging/hgiVulkan/capabilities.h"
 #include "pxr/imaging/hgiVulkan/commandQueue.h"
 #include "pxr/imaging/hgiVulkan/device.h"
 #include "pxr/imaging/hgiVulkan/vulkan.h"
@@ -56,6 +57,9 @@ public:
     ~HgiVulkan() override;
 
     HGIVULKAN_API
+    bool IsBackendSupported() const override;
+
+    HGIVULKAN_API
     HgiGraphicsCmdsUniquePtr CreateGraphicsCmds(
         HgiGraphicsCmdsDesc const& desc) override;
 
@@ -63,7 +67,8 @@ public:
     HgiBlitCmdsUniquePtr CreateBlitCmds() override;
 
     HGIVULKAN_API
-    HgiComputeCmdsUniquePtr CreateComputeCmds() override;
+    HgiComputeCmdsUniquePtr CreateComputeCmds(
+        HgiComputeCmdsDesc const& desc) override;
 
     HGIVULKAN_API
     HgiTextureHandle CreateTexture(HgiTextureDesc const & desc) override;
@@ -132,6 +137,12 @@ public:
     TfToken const& GetAPIName() const override;
 
     HGIVULKAN_API
+    HgiVulkanCapabilities const* GetCapabilities() const override;
+
+    HGIVULKAN_API
+    HgiIndirectCommandEncoder* GetIndirectCommandEncoder() const override;
+
+    HGIVULKAN_API
     void StartFrame() override;
 
     HGIVULKAN_API
@@ -163,10 +174,13 @@ public:
     void TrashObject(H* handle, std::vector<T*>* collector)
     {
         T* object = static_cast<T*>(handle->Get());
-        HgiVulkanDevice* device = object->GetDevice();
-        HgiVulkanCommandQueue* queue = device->GetCommandQueue();
-        object->GetInflightBits() = queue->GetInflightCommandBuffersBits();
-        collector->push_back(object);
+        if (object) {
+            HgiVulkanDevice* device = object->GetDevice();
+            HgiVulkanCommandQueue* queue = device->GetCommandQueue();
+            object->GetInflightBits() = queue->GetInflightCommandBuffersBits();
+            collector->push_back(object);
+        }
+
         *handle = H();
     }
 

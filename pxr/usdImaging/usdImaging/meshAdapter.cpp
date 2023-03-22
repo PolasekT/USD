@@ -23,9 +23,11 @@
 //
 #include "pxr/usdImaging/usdImaging/meshAdapter.h"
 
+#include "pxr/usdImaging/usdImaging/dataSourceMesh.h"
 #include "pxr/usdImaging/usdImaging/debugCodes.h"
 #include "pxr/usdImaging/usdImaging/delegate.h"
 #include "pxr/usdImaging/usdImaging/indexProxy.h"
+#include "pxr/usdImaging/usdImaging/primvarUtils.h"
 #include "pxr/usdImaging/usdImaging/tokens.h"
 
 #include "pxr/imaging/hd/mesh.h"
@@ -56,6 +58,47 @@ UsdImagingMeshAdapter::~UsdImagingMeshAdapter()
 {
 }
 
+TfTokenVector
+UsdImagingMeshAdapter::GetImagingSubprims(UsdPrim const& prim)
+{
+    return { TfToken() };
+}
+
+TfToken
+UsdImagingMeshAdapter::GetImagingSubprimType(
+        UsdPrim const& prim,
+        TfToken const& subprim)
+{
+    if (subprim.IsEmpty()) {
+        return HdPrimTypeTokens->mesh;
+    }
+    return TfToken();
+}
+
+HdContainerDataSourceHandle
+UsdImagingMeshAdapter::GetImagingSubprimData(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        const UsdImagingDataSourceStageGlobals &stageGlobals)
+{
+    if (subprim.IsEmpty()) {
+        return UsdImagingDataSourceMeshPrim::New(
+            prim.GetPath(),
+            prim,
+            stageGlobals);
+    }
+    return nullptr;
+}
+
+HdDataSourceLocatorSet
+UsdImagingMeshAdapter::InvalidateImagingSubprim(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        TfTokenVector const& properties)
+{
+    return UsdImagingDataSourceMeshPrim::Invalidate(prim, subprim, properties);
+}
+
 bool
 UsdImagingMeshAdapter::IsSupported(UsdImagingIndexProxy const* index) const
 {
@@ -70,22 +113,25 @@ UsdImagingMeshAdapter::Populate(UsdPrim const& prim,
     SdfPath cachePath = _AddRprim(HdPrimTypeTokens->mesh, prim, index,
                                   GetMaterialUsdPath(prim), instancerContext);
 
-    // Check for any UsdGeomSubset children and record dependencies for them.
-    if (UsdGeomImageable imageable = UsdGeomImageable(prim)) {
-        for (const UsdGeomSubset &subset:
-             UsdGeomSubset::GetAllGeomSubsets(imageable)) {
+    // Check for any UsdGeomSubset children of familyType 
+    // UsdShadeTokens->materialBind and record dependencies for them.
+    for (const UsdGeomSubset &subset:
+         UsdShadeMaterialBindingAPI(prim).GetMaterialBindSubsets()) {
+        index->AddDependency(cachePath, subset.GetPrim());
 
-            index->AddDependency(cachePath, subset.GetPrim());
-
-            // Ensure the bound material has been populated.
-            UsdPrim materialPrim = prim.GetStage()->GetPrimAtPath(
-                    GetMaterialUsdPath(subset.GetPrim()));
-            if (materialPrim) {
-                UsdImagingPrimAdapterSharedPtr materialAdapter =
-                    index->GetMaterialAdapter(materialPrim);
-                if (materialAdapter) {
-                    materialAdapter->Populate(materialPrim, index, nullptr);
-                }
+        // Ensure the bound material has been populated.
+        UsdPrim materialPrim = prim.GetStage()->GetPrimAtPath(
+                GetMaterialUsdPath(subset.GetPrim()));
+        if (materialPrim) {
+            UsdImagingPrimAdapterSharedPtr materialAdapter =
+                index->GetMaterialAdapter(materialPrim);
+            if (materialAdapter) {
+                materialAdapter->Populate(materialPrim, index, nullptr);
+                // We need to register a dependency on the material prim so
+                // that geometry is updated when the material is
+                // (specifically, DirtyMaterialId).
+                // XXX: Eventually, it would be great to push this into hydra.
+                index->AddDependency(cachePath, materialPrim);
             }
         }
     }
@@ -182,30 +228,28 @@ UsdImagingMeshAdapter::TrackVariability(UsdPrim const& prim,
     // we determine the topology is time varying, because each call to
     // _IsVarying will clear the topology dirty bit if it's already set.
     if (((*timeVaryingBits) & HdChangeTracker::DirtyTopology) == 0) {
-        if (UsdGeomImageable imageable = UsdGeomImageable(prim)) {
-            for (const UsdGeomSubset &subset:
-                 UsdGeomSubset::GetAllGeomSubsets(imageable)) {
+        for (const UsdGeomSubset &subset:
+             UsdShadeMaterialBindingAPI(prim).GetMaterialBindSubsets()) {
 
-                // If the topology dirty flag is already set, exit the loop.
-                if (((*timeVaryingBits) & HdChangeTracker::DirtyTopology) != 0){
-                    break;
-                }
+            // If the topology dirty flag is already set, exit the loop.
+            if (((*timeVaryingBits) & HdChangeTracker::DirtyTopology) != 0){
+                break;
+            }
 
-                if (!_IsVarying(subset.GetPrim(),
-                           UsdGeomTokens->elementType,
+            if (!_IsVarying(subset.GetPrim(),
+                            UsdGeomTokens->elementType,
+                            HdChangeTracker::DirtyTopology,
+                            UsdImagingTokens->usdVaryingPrimvar,
+                            timeVaryingBits,
+                            /*isInherited*/false)) {
+                // Only do this check if the elementType is not already
+                // known to be varying.
+                _IsVarying(subset.GetPrim(),
+                           UsdGeomTokens->indices,
                            HdChangeTracker::DirtyTopology,
                            UsdImagingTokens->usdVaryingPrimvar,
                            timeVaryingBits,
-                           /*isInherited*/false)) {
-                    // Only do this check if the elementType is not already
-                    // known to be varying.
-                    _IsVarying(subset.GetPrim(),
-                               UsdGeomTokens->indices,
-                               HdChangeTracker::DirtyTopology,
-                               UsdImagingTokens->usdVaryingPrimvar,
-                               timeVaryingBits,
-                               /*isInherited*/false);
-                }
+                           /*isInherited*/false);
             }
         }
     }
@@ -258,7 +302,7 @@ UsdImagingMeshAdapter::UpdateForTime(UsdPrim const& prim,
                 if (mesh.GetNormalsAttr().Get(&normals, time)) {
                     _MergePrimvar(&primvars,
                         UsdGeomTokens->normals,
-                        _UsdToHdInterpolation(mesh.GetNormalsInterpolation()),
+                        UsdImagingUsdToHdInterpolation(mesh.GetNormalsInterpolation()),
                         HdPrimvarRoleTokens->normal);
                 } else {
                     _RemovePrimvar(&primvars, UsdGeomTokens->normals);
@@ -312,7 +356,7 @@ UsdImagingMeshAdapter::ProcessPropertyChange(UsdPrim const& prim,
         UsdGeomPointBased pb(prim);
         return UsdImagingPrimAdapter::_ProcessNonPrefixedPrimvarPropertyChange(
             prim, cachePath, propertyName, HdTokens->normals,
-            _UsdToHdInterpolation(pb.GetNormalsInterpolation()),
+            UsdImagingUsdToHdInterpolation(pb.GetNormalsInterpolation()),
             HdChangeTracker::DirtyNormals);
     }
     if (propertyName == UsdImagingTokens->primvarsNormals) {
@@ -325,7 +369,7 @@ UsdImagingMeshAdapter::ProcessPropertyChange(UsdPrim const& prim,
         UsdGeomMesh mesh(prim);
         return UsdImagingPrimAdapter::_ProcessNonPrefixedPrimvarPropertyChange(
             prim, cachePath, propertyName, HdTokens->normals,
-            _UsdToHdInterpolation(mesh.GetNormalsInterpolation()),
+            UsdImagingUsdToHdInterpolation(mesh.GetNormalsInterpolation()),
             HdChangeTracker::DirtyNormals);
     }
     // Handle prefixed primvars that use special dirty bits.
@@ -358,27 +402,25 @@ UsdImagingMeshAdapter::GetTopology(UsdPrim const& prim,
         _Get<VtIntArray>(prim, UsdGeomTokens->holeIndices, time));
 
     // Convert UsdGeomSubsets to HdGeomSubsets.
-    if (UsdGeomImageable imageable = UsdGeomImageable(prim)) {
-        HdGeomSubsets geomSubsets;
-        for (const UsdGeomSubset &subset:
-             UsdGeomSubset::GetAllGeomSubsets(imageable)) {
-             VtIntArray indices;
-             TfToken elementType;
-             if (subset.GetElementTypeAttr().Get(&elementType) &&
-                 subset.GetIndicesAttr().Get(&indices, time)) {
-                 if (elementType == UsdGeomTokens->face) {
-                     geomSubsets.emplace_back(
-                        HdGeomSubset {
-                            HdGeomSubset::TypeFaceSet,
-                            subset.GetPath(),
-                            GetMaterialUsdPath(subset.GetPrim()),
-                            indices });
-                 }
-             }
+    HdGeomSubsets geomSubsets;
+    for (const UsdGeomSubset &subset:
+         UsdShadeMaterialBindingAPI(prim).GetMaterialBindSubsets()) {
+        VtIntArray indices;
+        TfToken elementType;
+        if (subset.GetElementTypeAttr().Get(&elementType) &&
+            subset.GetIndicesAttr().Get(&indices, time)) {
+            if (elementType == UsdGeomTokens->face) {
+                geomSubsets.emplace_back(
+                   HdGeomSubset {
+                       HdGeomSubset::TypeFaceSet,
+                       subset.GetPath(),
+                       GetMaterialUsdPath(subset.GetPrim()),
+                       indices });
+            }
         }
-        if (!geomSubsets.empty()) {
-            meshTopo.SetGeomSubsets(geomSubsets);
-        }
+    }
+    if (!geomSubsets.empty()) {
+        meshTopo.SetGeomSubsets(geomSubsets);
     }
 
     return VtValue(meshTopo);
@@ -497,5 +539,6 @@ UsdImagingMeshAdapter::Get(UsdPrim const& prim,
 
     return BaseAdapter::Get(prim, cachePath, key, time, outIndices);
 }
+
 
 PXR_NAMESPACE_CLOSE_SCOPE

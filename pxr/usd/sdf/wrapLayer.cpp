@@ -596,6 +596,10 @@ void wrapLayer()
 
         .def("TransferContent", &SdfLayer::TransferContent)
 
+        .def("StreamsData", &This::StreamsData)
+
+        .def("IsDetached", &This::IsDetached)
+
         .add_property("empty", &This::IsEmpty)
 
         .add_property("dirty", &This::IsDirty)
@@ -653,12 +657,7 @@ void wrapLayer()
 
         .def("GetDisplayName", &This::GetDisplayName)
 
-#if AR_VERSION == 1
-        .def("UpdateAssetInfo", &This::UpdateAssetInfo,
-             ( arg("fileVersion") = std::string() ))
-#else
         .def("UpdateAssetInfo", &This::UpdateAssetInfo)
-#endif
 
         .def("ComputeAbsolutePath", &This::ComputeAbsolutePath)
 
@@ -667,6 +666,20 @@ void wrapLayer()
         .def("RemoveInertSceneDescription", &This::RemoveInertSceneDescription)
 
         .def("UpdateExternalReference", &This::UpdateExternalReference)
+
+        .def("UpdateCompositionAssetDependency", 
+             &This::UpdateCompositionAssetDependency)
+
+        .def("SetDetachedLayerRules", &This::SetDetachedLayerRules)
+        .staticmethod("SetDetachedLayerRules")
+
+        .def("GetDetachedLayerRules", &This::GetDetachedLayerRules,
+             return_value_policy<return_by_value>())
+        .staticmethod("GetDetachedLayerRules")
+
+        .def("IsIncludedByDetachedLayerRules", 
+             &This::IsIncludedByDetachedLayerRules)
+        .staticmethod("IsIncludedByDetachedLayerRules")
 
         .def("SetMuted", &This::SetMuted)
 
@@ -873,17 +886,21 @@ void wrapLayer()
             "the asset/real path of all layers in the registry.")
         .staticmethod("DumpLayerInfo")
 
-        .def("GetExternalReferences", 
+        .def("GetExternalReferences",
             make_function(&This::GetExternalReferences,
-                          return_value_policy<TfPySequenceToTuple>()), 
+                          return_value_policy<TfPySequenceToTuple>()),
             "Return a list of asset paths for\n"
             "this layer.")
 
         .add_property("externalReferences",
-            make_function(&This::GetExternalReferences, 
+            make_function(&This::GetExternalReferences,
                           return_value_policy<TfPySequenceToList>()),
             "Return unique list of asset paths of external references for\n"
             "given layer.")
+
+        .def("GetCompositionAssetDependencies",
+             make_function(&This::GetCompositionAssetDependencies,
+                           return_value_policy<TfPySequenceToList>()))
 
         .def("GetExternalAssetDependencies",
              make_function(&This::GetExternalAssetDependencies,
@@ -929,6 +946,28 @@ void wrapLayer()
         .def("SetTimeSample", &_SetTimeSample)
         .def("EraseTimeSample", &_EraseTimeSample)
         ;
+
+    {
+        using This = SdfLayer::DetachedLayerRules;
+        class_<This>("DetachedLayerRules")
+            .def(init<>())
+
+            .def("IncludeAll", &This::IncludeAll,
+                 return_value_policy<return_by_value>())
+            .def("Include", &This::Include,
+                 return_value_policy<return_by_value>())
+            .def("Exclude", &This::Exclude,
+                 return_value_policy<return_by_value>())
+
+            .def("IncludedAll", &This::IncludedAll)
+            .def("GetIncluded", &This::GetIncluded,
+                 return_value_policy<TfPySequenceToList>())
+            .def("GetExcluded", &This::GetExcluded,
+                 return_value_policy<TfPySequenceToList>())
+
+            .def("IsIncluded", &This::IsIncluded)
+            ;
+    }
 
     TfPyContainerConversions::from_python_sequence<
         SdfLayerHandleSet, TfPyContainerConversions::set_policy>();

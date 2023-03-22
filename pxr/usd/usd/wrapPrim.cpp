@@ -27,6 +27,7 @@
 #include "pxr/usd/usd/payloads.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/references.h"
+#include "pxr/usd/usd/resolveTarget.h"
 #include "pxr/usd/usd/inherits.h"
 #include "pxr/usd/usd/specializes.h"
 #include "pxr/usd/usd/variantSets.h"
@@ -36,11 +37,13 @@
 #include "pxr/usd/sdf/payload.h"
 #include "pxr/usd/sdf/primSpec.h"
 
+#include "pxr/base/tf/pyAnnotatedBoolResult.h"
 #include "pxr/base/tf/pyContainerConversions.h"
 #include "pxr/base/tf/pyFunction.h"
 #include "pxr/base/tf/pyResultConversions.h"
 
 #include <boost/python/class.hpp>
+#include <boost/python/def.hpp>
 #include <boost/python/operators.hpp>
 
 #include <string>
@@ -140,10 +143,70 @@ _WrapGetAuthoredProperties(const UsdPrim &prim, boost::python::object predicate)
     return prim.GetAuthoredProperties(pred);
 }
 
+struct Usd_PrimCanApplyAPIResult : public TfPyAnnotatedBoolResult<string>
+{
+    Usd_PrimCanApplyAPIResult(bool val, string const &msg) :
+        TfPyAnnotatedBoolResult<string>(val, msg) {}
+};
+
+template <class... Args>
+Usd_PrimCanApplyAPIResult
+_WrapCanApply(const UsdPrim &prim, const Args &... args) 
+{
+    std::string whyNot;
+    bool result = prim.CanApplyAPI(args..., &whyNot);
+    return Usd_PrimCanApplyAPIResult(result, whyNot);
+}
+
+static UsdStageWeakPtr
+_UnsafeGetStageForTesting(UsdObject const &obj)
+{
+    return obj.GetStage();
+}
+
+static object
+_WrapGetVersionIfIsInFamily(
+    const UsdPrim &prim, const TfToken &schemaFamily) 
+{
+    UsdSchemaVersion version;
+    if (prim.GetVersionIfIsInFamily(schemaFamily, &version)) {
+        return object(version);
+    }
+    return object();
+}
+
+static object
+_WrapGetVersionIfHasAPIInFamily_1(
+    const UsdPrim &prim, const TfToken &schemaFamily) 
+{
+    UsdSchemaVersion version;
+    if (prim.GetVersionIfHasAPIInFamily(schemaFamily, &version)) {
+        return object(version);
+    }
+    return object();
+}
+
+static object
+_WrapGetVersionIfHasAPIInFamily_2(
+    const UsdPrim &prim, const TfToken &schemaFamily, 
+    const TfToken &instanceName) 
+{
+    UsdSchemaVersion version;
+    if (prim.GetVersionIfHasAPIInFamily(
+            schemaFamily, instanceName, &version)) {
+        return object(version);
+    }
+    return object();
+}
+
+
 } // anonymous namespace 
 
 void wrapUsdPrim()
 {
+    Usd_PrimCanApplyAPIResult::Wrap<Usd_PrimCanApplyAPIResult>(
+        "_CanApplyAPIResult", "whyNot");
+
     // Predicate signature for FindAllRelationshipTargetPaths().
     TfPyFunctionFromPython<bool (UsdRelationship const &)>();
 
@@ -163,6 +226,9 @@ void wrapUsdPrim()
         .def("GetPrimDefinition", &UsdPrim::GetPrimDefinition,
              return_internal_reference<>())
         .def("GetPrimStack", &UsdPrim::GetPrimStack)
+        .def("GetPrimStackWithLayerOffsets", 
+             &UsdPrim::GetPrimStackWithLayerOffsets,
+             return_value_policy<TfPySequenceToList>())
 
         .def("GetSpecifier", &UsdPrim::GetSpecifier)
         .def("SetSpecifier", &UsdPrim::SetSpecifier, arg("specifier"))
@@ -233,20 +299,210 @@ void wrapUsdPrim()
         .def("ClearPropertyOrder", &UsdPrim::ClearPropertyOrder)
 
         .def("IsA",
-            (bool (UsdPrim::*)(const TfType&) const)&UsdPrim::IsA, 
-            arg("schemaType"))
+            (bool (UsdPrim::*)(const TfType&) const)
+            &UsdPrim::IsA, 
+            (arg("schemaType")))
+        .def("IsA",
+            (bool (UsdPrim::*)(const TfToken&) const)
+            &UsdPrim::IsA, 
+            (arg("schemaIdentifier")))
+        .def("IsA",
+            (bool (UsdPrim::*)(const TfToken&, 
+                               UsdSchemaVersion) const)
+            &UsdPrim::IsA, 
+            (arg("schemaFamily"),
+             arg("version")))
+
+        .def("IsInFamily",
+            (bool (UsdPrim::*)(const TfToken&) const)
+            &UsdPrim::IsInFamily, 
+            (arg("schemaFamily")))
+        .def("IsInFamily",
+            (bool (UsdPrim::*)(const TfToken&, 
+                               UsdSchemaVersion, 
+                               UsdSchemaRegistry::VersionPolicy) const)
+            &UsdPrim::IsInFamily, 
+            (arg("schemaFamily"),
+             arg("version"), 
+             arg("versionPolicy")))
+        .def("IsInFamily",
+            (bool (UsdPrim::*)(const TfType&, 
+                               UsdSchemaRegistry::VersionPolicy) const)
+            &UsdPrim::IsInFamily, 
+            (arg("schemaType"), 
+             arg("versionPolicy")))
+        .def("IsInFamily",
+            (bool (UsdPrim::*)(const TfToken&, 
+                               UsdSchemaRegistry::VersionPolicy) const)
+            &UsdPrim::IsInFamily, 
+            (arg("schemaIdentifier"), 
+             arg("versionPolicy")))
+
+        .def("GetVersionIfIsInFamily",
+             &_WrapGetVersionIfIsInFamily)
+
+        .def("HasAPI", 
+            (bool (UsdPrim::*)(const TfType&) const)
+            &UsdPrim::HasAPI,
+            (arg("schemaType")))
         .def("HasAPI", 
             (bool (UsdPrim::*)(const TfType&, const TfToken&) const)
             &UsdPrim::HasAPI,
-            (arg("schemaType"), arg("instanceName")=TfToken()))
+            (arg("schemaType"), arg("instanceName")))
+        .def("HasAPI", 
+            (bool (UsdPrim::*)(const TfToken&) const)
+            &UsdPrim::HasAPI,
+            (arg("schemaIdentifier")))
+        .def("HasAPI", 
+            (bool (UsdPrim::*)(const TfToken&, const TfToken&) const)
+            &UsdPrim::HasAPI,
+            (arg("schemaIdentifier"), arg("instanceName")))
+        .def("HasAPI", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion) const)
+            &UsdPrim::HasAPI,
+            (arg("schemaFamily"), arg("schemaVersion")))
+        .def("HasAPI", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion, 
+                               const TfToken&) const)
+            &UsdPrim::HasAPI,
+            (arg("schemaFamily"), arg("schemaVersion"), arg("instanceName")))
+
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfType&, 
+                               UsdSchemaRegistry::VersionPolicy) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaType"), 
+             arg("versionPolicy")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfType&, 
+                               UsdSchemaRegistry::VersionPolicy, const TfToken&) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaType"), 
+             arg("versionPolicy"), arg("instanceName")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfToken&) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaFamily")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfToken&, const TfToken&) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaFamily"), arg("instanceName")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion, 
+                               UsdSchemaRegistry::VersionPolicy) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaFamily"), arg("schemaVersion"), 
+             arg("versionPolicy")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion,
+                               UsdSchemaRegistry::VersionPolicy, const TfToken&) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaFamily"), arg("schemaVersion"), 
+             arg("versionPolicy"), arg("instanceName")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfToken&, 
+                               UsdSchemaRegistry::VersionPolicy) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaIdentifier"), 
+             arg("versionPolicy")))
+        .def("HasAPIInFamily", 
+            (bool (UsdPrim::*)(const TfToken&, 
+                               UsdSchemaRegistry::VersionPolicy, const TfToken&) const)
+            &UsdPrim::HasAPIInFamily,
+            (arg("schemaIdentifier"), 
+             arg("versionPolicy"), arg("instanceName")))
+
+        .def("GetVersionIfHasAPIInFamily", 
+             &_WrapGetVersionIfHasAPIInFamily_1)
+        .def("GetVersionIfHasAPIInFamily", 
+             &_WrapGetVersionIfHasAPIInFamily_2)
+
+        .def("CanApplyAPI", 
+            +[](const UsdPrim& prim, const TfType &schemaType) {
+                return _WrapCanApply(prim, schemaType);
+            },
+            (arg("schemaType")))
+        .def("CanApplyAPI", 
+            +[](const UsdPrim& prim, const TfType &schemaType, 
+                const TfToken &instanceName) {
+                return _WrapCanApply(prim, schemaType, instanceName);
+            },
+            (arg("schemaType"), arg("instanceName")))
+        .def("CanApplyAPI", 
+            +[](const UsdPrim& prim, const TfToken &schemaIdentifier) {
+                return _WrapCanApply(prim, schemaIdentifier);
+            },
+            (arg("schemaIdentifier")))
+        .def("CanApplyAPI", 
+            +[](const UsdPrim& prim, const TfToken &schemaIdentifier, 
+                const TfToken &instanceName) {
+                return _WrapCanApply(prim, schemaIdentifier, instanceName);
+            },
+            (arg("schemaIdentifier"), arg("instanceName")))
+        .def("CanApplyAPI", 
+            +[](const UsdPrim& prim, const TfToken &schemaFamily, 
+                UsdSchemaVersion version) {
+                return _WrapCanApply(prim, schemaFamily, version);
+            },
+            (arg("schemaFamily"), arg("schemaVersion")))
+        .def("CanApplyAPI", 
+            +[](const UsdPrim& prim, const TfToken &schemaFamily, 
+                UsdSchemaVersion version, const TfToken &instanceName) {
+                return _WrapCanApply(prim, schemaFamily, version, instanceName);
+            },
+            (arg("schemaFamily"), arg("schemaVersion"), arg("instanceName")))
+
+        .def("ApplyAPI", 
+            (bool (UsdPrim::*)(const TfType&) const)
+            &UsdPrim::ApplyAPI,
+            (arg("schemaType")))
         .def("ApplyAPI", 
             (bool (UsdPrim::*)(const TfType&, const TfToken&) const)
             &UsdPrim::ApplyAPI,
-            (arg("schemaType"), arg("instanceName")=TfToken()))
+            (arg("schemaType"), arg("instanceName")))
+        .def("ApplyAPI", 
+            (bool (UsdPrim::*)(const TfToken&) const)
+            &UsdPrim::ApplyAPI,
+            (arg("schemaIdentifier")))
+        .def("ApplyAPI", 
+            (bool (UsdPrim::*)(const TfToken&, const TfToken&) const)
+            &UsdPrim::ApplyAPI,
+            (arg("schemaIdentifier"), arg("instanceName")))
+        .def("ApplyAPI", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion) const)
+            &UsdPrim::ApplyAPI,
+            (arg("schemaFamily"), arg("schemaVersion")))
+        .def("ApplyAPI", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion, 
+                               const TfToken&) const)
+            &UsdPrim::ApplyAPI,
+            (arg("schemaFamily"), arg("schemaVersion"), arg("instanceName")))
+
+        .def("RemoveAPI", 
+            (bool (UsdPrim::*)(const TfType&) const)
+            &UsdPrim::RemoveAPI,
+            (arg("schemaType")))
         .def("RemoveAPI", 
             (bool (UsdPrim::*)(const TfType&, const TfToken&) const)
             &UsdPrim::RemoveAPI,
-            (arg("schemaType"), arg("instanceName")=TfToken()))
+            (arg("schemaType"), arg("instanceName")))
+        .def("RemoveAPI", 
+            (bool (UsdPrim::*)(const TfToken&) const)
+            &UsdPrim::RemoveAPI,
+            (arg("schemaIdentifier")))
+        .def("RemoveAPI", 
+            (bool (UsdPrim::*)(const TfToken&, const TfToken&) const)
+            &UsdPrim::RemoveAPI,
+            (arg("schemaIdentifier"), arg("instanceName")))
+        .def("RemoveAPI", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion) const)
+            &UsdPrim::RemoveAPI,
+            (arg("schemaFamily"), arg("schemaVersion")))
+        .def("RemoveAPI", 
+            (bool (UsdPrim::*)(const TfToken&, UsdSchemaVersion, 
+                               const TfToken&) const)
+            &UsdPrim::RemoveAPI,
+            (arg("schemaFamily"), arg("schemaVersion"), arg("instanceName")))
 
         .def("AddAppliedSchema", &UsdPrim::AddAppliedSchema)
         .def("RemoveAppliedSchema", &UsdPrim::RemoveAppliedSchema)
@@ -380,21 +636,12 @@ void wrapUsdPrim()
         .def("IsPathInPrototype", &UsdPrim::IsPathInPrototype, arg("path"))
         .staticmethod("IsPathInPrototype")
 
-        .def("IsMasterPath", &UsdPrim::IsMasterPath, arg("path"))
-        .staticmethod("IsMasterPath")
-        .def("IsPathInMaster", &UsdPrim::IsPathInMaster, arg("path"))
-        .staticmethod("IsPathInMaster")
-
         .def("IsInstance", &UsdPrim::IsInstance)
-        .def("IsMaster", &UsdPrim::IsMaster)
-        .def("IsInMaster", &UsdPrim::IsInMaster)
-        .def("GetMaster", &UsdPrim::GetMaster)
         .def("IsPrototype", &UsdPrim::IsPrototype)
         .def("IsInPrototype", &UsdPrim::IsInPrototype)
         .def("GetPrototype", &UsdPrim::GetPrototype)
 
         .def("IsInstanceProxy", &UsdPrim::IsInstanceProxy)
-        .def("GetPrimInMaster", &UsdPrim::GetPrimInMaster)
         .def("GetPrimInPrototype", &UsdPrim::GetPrimInPrototype)
 
         .def("GetPrimAtPath", &UsdPrim::GetPrimAtPath, arg("path"))
@@ -406,6 +653,11 @@ void wrapUsdPrim()
         .def("GetInstances", &UsdPrim::GetInstances,
                 return_value_policy<TfPySequenceToList>())
 
+        .def("MakeResolveTargetUpToEditTarget", 
+            &UsdPrim::MakeResolveTargetUpToEditTarget)
+        .def("MakeResolveTargetStrongerThanEditTarget", 
+            &UsdPrim::MakeResolveTargetStrongerThanEditTarget)
+        
         // Exposed only for testing and debugging.
         .def("_GetSourcePrimIndex", &Usd_PrimGetSourcePrimIndex,
              return_value_policy<return_by_value>())
@@ -415,4 +667,13 @@ void wrapUsdPrim()
                         TfPySequenceToPython<std::vector<UsdPrim>>>();
 
     TfPyRegisterStlSequencesFromPython<UsdPrim>();
+    TfPyContainerConversions::tuple_mapping_pair<
+        std::pair<SdfPrimSpecHandle, SdfLayerOffset>>();
+
+    // This is wrapped in order to let python call an API that will get through
+    // our usual Python API guards to access an invalid prim and throw an
+    // exception.
+    boost::python::def(
+        "_UnsafeGetStageForTesting", &_UnsafeGetStageForTesting);
+    
 }

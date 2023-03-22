@@ -25,6 +25,7 @@
 #define PXR_IMAGING_HGIVULKAN_CAPABILITIES_H
 
 #include "pxr/pxr.h"
+#include "pxr/imaging/hgi/capabilities.h"
 #include "pxr/imaging/hgiVulkan/api.h"
 #include "pxr/imaging/hgiVulkan/vulkan.h"
 
@@ -37,7 +38,7 @@ class HgiVulkanDevice;
 ///
 /// Reports the capabilities of the Vulkan device.
 ///
-class HgiVulkanCapabilities final
+class HgiVulkanCapabilities final : public HgiCapabilities
 {
 public:
     HGIVULKAN_API
@@ -46,15 +47,26 @@ public:
     HGIVULKAN_API
     ~HgiVulkanCapabilities();
 
+    HGIVULKAN_API
+    int GetAPIVersion() const override;
+    
+    HGIVULKAN_API
+    int GetShaderVersion() const override;
+
     bool supportsTimeStamps;
     VkPhysicalDeviceProperties vkDeviceProperties;
+    VkPhysicalDeviceProperties2 vkDeviceProperties2;
+    VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT
+        vkVertexAttributeDivisorProperties;
     VkPhysicalDeviceFeatures vkDeviceFeatures;
     VkPhysicalDeviceFeatures2 vkDeviceFeatures2;
+    VkPhysicalDeviceVulkan11Features vkVulkan11Features;
     VkPhysicalDeviceDescriptorIndexingFeaturesEXT vkIndexingFeatures;
+    VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT
+        vkVertexAttributeDivisorFeatures;
     VkPhysicalDeviceMemoryProperties vkMemoryProperties;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
 
 #endif
-

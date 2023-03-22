@@ -32,7 +32,6 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    (fieldName)
     (fieldIndex)
     (fieldPurpose)
     (textureMemory)
@@ -71,7 +70,7 @@ HdStField::Sync(HdSceneDelegate *sceneDelegate,
         const TfToken resolvedFilePath = TfToken(filePath.GetResolvedPath());
 
         const VtValue fieldNameValue = sceneDelegate->Get(
-            GetId(), _tokens->fieldName);
+            GetId(), HdFieldTokens->fieldName);
         const TfToken &fieldName = fieldNameValue.Get<TfToken>();
 
         const VtValue fieldIndexValue = sceneDelegate->Get(
@@ -101,12 +100,13 @@ HdStField::Sync(HdSceneDelegate *sceneDelegate,
             1048576 * textureMemoryValue.GetWithDefault<float>(0.0f);
         
         if (_isInitialized) {
+            // This code is no longer needed when using scene indices
+            // or scene index emulation since this dependency is now tracked
+            // by the HdSt_DependencySceneIndexPlugin.
+            //
             // Force volume prim to pick up the new field resource and
             // recompute bounding box.
             //
-            // XXX:-matthias
-            // Ideally, this would be more fine-grained than blasting all
-            // rprims.
             HdChangeTracker& changeTracker =
                 sceneDelegate->GetRenderIndex().GetChangeTracker();
             changeTracker.MarkAllRprimsDirty(HdChangeTracker::DirtyVolumeField);

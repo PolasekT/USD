@@ -153,11 +153,6 @@ public:
     /// \sa UsdSchemaKind
     static const UsdSchemaKind schemaKind = UsdSchemaKind::SingleApplyAPI;
 
-    /// \deprecated
-    /// Same as schemaKind, provided to maintain temporary backward 
-    /// compatibility with older generated schemas.
-    static const UsdSchemaKind schemaType = UsdSchemaKind::SingleApplyAPI;
-
     /// Construct a UsdGeomModelAPI on UsdPrim \p prim .
     /// Equivalent to UsdGeomModelAPI::Get(prim.GetStage(), prim.GetPath())
     /// for a \em valid \p prim, but will not immediately throw an error for
@@ -200,6 +195,26 @@ public:
     Get(const UsdStagePtr &stage, const SdfPath &path);
 
 
+    /// Returns true if this <b>single-apply</b> API schema can be applied to 
+    /// the given \p prim. If this schema can not be a applied to the prim, 
+    /// this returns false and, if provided, populates \p whyNot with the 
+    /// reason it can not be applied.
+    /// 
+    /// Note that if CanApply returns false, that does not necessarily imply
+    /// that calling Apply will fail. Callers are expected to call CanApply
+    /// before calling Apply if they want to ensure that it is valid to 
+    /// apply a schema.
+    /// 
+    /// \sa UsdPrim::GetAppliedSchemas()
+    /// \sa UsdPrim::HasAPI()
+    /// \sa UsdPrim::CanApplyAPI()
+    /// \sa UsdPrim::ApplyAPI()
+    /// \sa UsdPrim::RemoveAPI()
+    ///
+    USDGEOM_API
+    static bool 
+    CanApply(const UsdPrim &prim, std::string *whyNot=nullptr);
+
     /// Applies this <b>single-apply</b> API schema to the given \p prim.
     /// This information is stored by adding "GeomModelAPI" to the 
     /// token-valued, listOp metadata \em apiSchemas on the prim.
@@ -211,6 +226,7 @@ public:
     /// 
     /// \sa UsdPrim::GetAppliedSchemas()
     /// \sa UsdPrim::HasAPI()
+    /// \sa UsdPrim::CanApplyAPI()
     /// \sa UsdPrim::ApplyAPI()
     /// \sa UsdPrim::RemoveAPI()
     ///
@@ -224,12 +240,6 @@ protected:
     /// \sa UsdSchemaKind
     USDGEOM_API
     UsdSchemaKind _GetSchemaKind() const override;
-
-    /// \deprecated
-    /// Same as _GetSchemaKind, provided to maintain temporary backward 
-    /// compatibility with older generated schemas.
-    USDGEOM_API
-    UsdSchemaKind _GetSchemaType() const override;
 
 private:
     // needs to invoke _GetStaticTfType.
@@ -561,13 +571,36 @@ public:
     USDGEOM_API
     UsdAttribute GetExtentsHintAttr() const;
 
-    /// For the given model, compute the value for the extents hint with the
-    /// given \p bboxCache.  \p bboxCache should be setup with the
-    /// appropriate time.  After calling this function, the \p bboxCache may
-    /// have it's included purposes changed.
+    /// Compute a value suitable for passing to SetExtentsHint().
     ///
-    /// \note \p bboxCache should not be in use by any other thread while
-    /// this method is using it in a thread.
+    /// If this model is a UsdGeomBoundable, call
+    /// UsdGeomBoundable::ComputeExtentFromPlugins() with the \p bboxCache 's
+    /// time code.  If that function returns true, then populate the returned
+    /// array with the min and max repeated according to the number of tokens in
+    /// UsdGeomImageable::GetOrderedPurposeTokens().  Otherwise return an array
+    /// with a single empty range.
+    ///
+    /// If this model is not a UsdGeomBoundable, populate the return value by
+    /// calling UsdGeomBBoxCache::ComputeUntransformedBound() (and
+    /// GfBBox3d::ComputeAlignedBox() on that result) for each token in
+    /// UsdGeomImageable::GetOrderedPurposeTokens().
+    ///
+    /// In either case the, Nth successive pair of entries in the returned array
+    /// will be the min and max coordinates of the extent corresponding to the
+    /// Nth token in UsdGeomImageable::GetOrderedPurposeTokens(), except
+    /// trailing empty boxes are omitted, unless all boxes are empty in which
+    /// case the result is a single empty box.
+    ///
+    /// For example, if GetOrderedPurposeTokens() is [default, render, proxy,
+    /// guide] and this function returns [(0,0,0), (1,1,1), (+FLT_MAX),
+    /// (-FLT_MIN), (0,0,0), (1,1,1)] then this means that the computed extents
+    /// for 'default' and 'proxy' purpose are [(0,0,0), (1,1,1)] and the extents
+    /// for 'render' and 'guide' purposes are empty.
+    ///
+    /// This function modifies \p bboxCache's included purposes.
+    ///
+    /// \note \p bboxCache must not be used concurrently during the execution of
+    /// this function.
     USDGEOM_API
     VtVec3fArray ComputeExtentsHint(UsdGeomBBoxCache& bboxCache) const;
 

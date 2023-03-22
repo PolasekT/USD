@@ -28,19 +28,16 @@
 #include "pxr/imaging/hdSt/api.h"
 #include "pxr/imaging/hd/enums.h"
 #include "pxr/imaging/hd/types.h"
-#include "pxr/imaging/hio/types.h"
 #include "pxr/base/tf/token.h"
+#include "pxr/imaging/garch/glApi.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
 
+class HdSt_GeometricShader;
+
 class HdStGLConversions {
 public:
-    /// Returns the size of glDataType.
-    /// For example: sizeof(GLuint)
-    HDST_API
-    static size_t GetComponentSize(int glDataType);
-
     HDST_API
     static GLenum GetGlDepthFunc(HdCompareFunction func);
 
@@ -57,7 +54,10 @@ public:
     static GLenum GetGlBlendFactor(HdBlendFactor factor);
 
     HDST_API
-    static int GetGLAttribType(HdType type);
+    static GLenum GetGLAttribType(HdType type);
+
+    HDST_API
+    static GLenum GetPrimitiveMode(HdSt_GeometricShader const *geometricShader);
 
     /// Return the name of the given type as represented in GLSL.
     HDST_API

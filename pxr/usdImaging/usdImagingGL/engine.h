@@ -71,9 +71,11 @@ class UsdPrim;
 class HdRenderIndex;
 class HdxTaskController;
 class UsdImagingDelegate;
-class UsdImagingGLLegacyEngine;
 
 TF_DECLARE_WEAK_AND_REF_PTRS(GlfSimpleLightingContext);
+TF_DECLARE_REF_PTRS(UsdImagingStageSceneIndex);
+TF_DECLARE_REF_PTRS(UsdImagingSelectionSceneIndex);
+TF_DECLARE_REF_PTRS(HdSceneIndexBase);
 
 /// \class UsdImagingGLEngine
 ///
@@ -84,34 +86,32 @@ class UsdImagingGLEngine
 public:
 
     // ---------------------------------------------------------------------
-    /// \name Global State
-    /// @{
-    // ---------------------------------------------------------------------
-
-    /// Returns true if Hydra is enabled for GL drawing.
-    USDIMAGINGGL_API
-    static bool IsHydraEnabled();
-
-    /// @}
-
-    // ---------------------------------------------------------------------
     /// \name Construction
     /// @{
     // ---------------------------------------------------------------------
 
-    /// A HdDriver, containing the Hgi of your choice, can be optionally passed
+    /// An HdDriver, containing the Hgi of your choice, can be optionally passed
     /// in during construction. This can be helpful if you application creates
     /// multiple UsdImagingGLEngine that wish to use the same HdDriver / Hgi.
+    /// The \p rendererPluginId argument indicates the renderer plugin that
+    /// Hyrda should use. If the empty token is passed in, a default renderer
+    /// plugin will be chosen depending on the value of \p gpuEnabled.
+    /// The \p gpuEnabled argument determines if this instance will allow Hydra
+    /// to use the GPU to produce images.
     USDIMAGINGGL_API
-    UsdImagingGLEngine(const HdDriver& driver = HdDriver());
+    UsdImagingGLEngine(const HdDriver& driver = HdDriver(),
+                       const TfToken& rendererPluginId = TfToken(),
+                       bool gpuEnabled = true);
 
     USDIMAGINGGL_API
     UsdImagingGLEngine(const SdfPath& rootPath,
                        const SdfPathVector& excludedPaths,
-                       const SdfPathVector& invisedPaths=SdfPathVector(),
+                       const SdfPathVector& invisedPaths = SdfPathVector(),
                        const SdfPath& sceneDelegateID =
                                         SdfPath::AbsoluteRootPath(),
-                       const HdDriver& driver = HdDriver());
+                       const HdDriver& driver = HdDriver(),
+                       const TfToken& rendererPluginId = TfToken(),
+                       bool gpuEnabled = true);
 
     // Disallow copies
     UsdImagingGLEngine(const UsdImagingGLEngine&) = delete;
@@ -219,22 +219,12 @@ public:
     void SetCameraState(const GfMatrix4d& viewMatrix,
                         const GfMatrix4d& projectionMatrix);
 
-    /// Helper function to extract camera and viewport state from opengl and
-    /// then call SetCameraState and SetRenderViewport
-    USDIMAGINGGL_API
-    void SetCameraStateFromOpenGL();
-
     /// @}
 
     // ---------------------------------------------------------------------
     /// \name Light State
     /// @{
     // ---------------------------------------------------------------------
-    
-    /// Helper function to extract lighting state from opengl and then
-    /// call SetLights.
-    USDIMAGINGGL_API
-    void SetLightingStateFromOpenGL();
 
     /// Copy lighting state from another lighting context.
     USDIMAGINGGL_API
@@ -340,6 +330,10 @@ public:
     USDIMAGINGGL_API
     static std::string GetRendererDisplayName(TfToken const &id);
 
+    /// Return if the GPU is enabled and can be used for any rendering tasks.
+    USDIMAGINGGL_API
+    bool GetGPUEnabled() const;
+
     /// Return the id of the currently used renderer plugin.
     USDIMAGINGGL_API
     TfToken GetCurrentRendererId() const;
@@ -368,6 +362,10 @@ public:
     USDIMAGINGGL_API
     HgiTextureHandle GetAovTexture(TfToken const& name) const;
 
+    /// Returns the AOV render buffer for the given token.
+    USDIMAGINGGL_API
+    HdRenderBuffer* GetAovRenderBuffer(TfToken const& name) const;
+        
     /// Returns the list of renderer settings.
     USDIMAGINGGL_API
     UsdImagingGLRendererSettingsList GetRendererSettingsList() const;
@@ -396,6 +394,27 @@ public:
     void SetPresentationOutput(TfToken const &api, VtValue const &framebuffer);
 
     /// @}
+    
+    // ---------------------------------------------------------------------
+    /// \name Renderer Command API
+    /// @{
+    // ---------------------------------------------------------------------
+
+    /// Return command deescriptors for commands supported by the active 
+    /// render delegate.
+    ///
+    USDIMAGINGGL_API
+    HdCommandDescriptors GetRendererCommandDescriptors() const;
+
+    /// Invokes command on the active render delegate. If successful, returns
+    /// \c true, returns \c false otherwise. Note that the command will not
+    /// succeeed if it is not among those returned by
+    /// GetRendererCommandDescriptors() for the same active render delegate.
+    ///
+    USDIMAGINGGL_API
+    bool InvokeRendererCommand(
+            const TfToken &command, 
+            const HdCommandArgs &args = HdCommandArgs()) const;
 
     // ---------------------------------------------------------------------
     /// \name Control of background rendering threads.
@@ -441,10 +460,27 @@ public:
     /// @{
     // ---------------------------------------------------------------------
 
-    /// Set \p id to one of the HdxColorCorrectionTokens.
+    /// Set \p ccType to one of the HdxColorCorrectionTokens:
+    /// {disabled, sRGB, openColorIO}
+    ///
+    /// If 'openColorIO' is used, \p ocioDisplay, \p ocioView, \p ocioColorSpace
+    /// and \p ocioLook are options the client may supply to configure OCIO.
+    /// \p ocioColorSpace refers to the input (source) color space. 
+    /// The default value is substituted if an option isn't specified.
+    /// You can find the values for these strings inside the
+    /// profile/config .ocio file. For example:
+    ///
+    ///  displays:
+    ///    rec709g22:
+    ///      !<View> {name: studio, colorspace: linear, looks: studio_65_lg2}
+    ///
     USDIMAGINGGL_API
     void SetColorCorrectionSettings(
-        TfToken const& id);
+        TfToken const& ccType,
+        TfToken const& ocioDisplay = {},
+        TfToken const& ocioView = {},
+        TfToken const& ocioColorSpace = {},
+        TfToken const& ocioLook = {});
 
     /// @}
 
@@ -503,6 +539,17 @@ protected:
     USDIMAGINGGL_API
     void _PrepareRender(const UsdImagingGLRenderParams& params);
 
+    USDIMAGINGGL_API
+    void _UpdateDomeLightCameraVisibility();
+
+    using BBoxVector = std::vector<GfBBox3d>;
+
+    USDIMAGINGGL_API
+    void _SetBBoxParams(
+        const BBoxVector& bboxes,
+        const GfVec4f& bboxLineColor,
+        float bboxLineDashSize);
+
     // Create a hydra collection given root paths and render params.
     // Returns true if the collection was updated.
     USDIMAGINGGL_API
@@ -532,6 +579,11 @@ protected:
     USDIMAGINGGL_API
     static TfToken _GetDefaultRendererPluginId();
 
+    /// Get a direct pointer to the scene delegate.
+    /// \deprecated Existing instances of this call will be replaced with new
+    ///             APIs on this class, to support multiplexing between the
+    ///             scene delegate and scene index. This API is scheduled for
+    ///             deletion.
     USDIMAGINGGL_API
     UsdImagingDelegate *_GetSceneDelegate() const;
 
@@ -542,14 +594,10 @@ protected:
     HdxTaskController *_GetTaskController() const;
 
     USDIMAGINGGL_API
-    bool _IsUsingLegacyImpl() const;
-
-    USDIMAGINGGL_API
     HdSelectionSharedPtr _GetSelection() const;
 
 protected:
 
-// private:
     // Note that any of the fields below might become private
     // in the future and subclasses should use the above getters
     // to access them instead.
@@ -561,6 +609,7 @@ protected:
     VtValue _userFramebuffer;
 
 protected:
+    bool _gpuEnabled;
     HdPluginRenderDelegateUniqueHandle _renderDelegate;
     std::unique_ptr<HdRenderIndex> _renderIndex;
 
@@ -576,23 +625,24 @@ protected:
 
     // Data we want to live across render plugin switches:
     GfVec4f _selectionColor;
+    bool _domeLightCameraVisibility;
 
     SdfPath _rootPath;
     SdfPathVector _excludedPrimPaths;
     SdfPathVector _invisedPrimPaths;
     bool _isPopulated;
 
-    // An implementation of much of the engine functionality that doesn't
-    // invoke any of the advanced Hydra features.  It is kept around for 
-    // backwards compatibility and may one day be deprecated.  Most of the 
-    // time we expect this to be null.  When it is not null, none of the other
-    // member variables of this class are used.
-    std::unique_ptr<UsdImagingGLLegacyEngine> _legacyImpl;
-
 private:
     void _DestroyHydraObjects();
 
+    // Note that we'll only ever use one of _sceneIndex/_sceneDelegate
+    // at a time...
+    UsdImagingStageSceneIndexRefPtr _stageSceneIndex;
+    UsdImagingSelectionSceneIndexRefPtr _selectionSceneIndex;
+    HdSceneIndexBaseRefPtr _sceneIndex;
+
     std::unique_ptr<UsdImagingDelegate> _sceneDelegate;
+
     std::unique_ptr<HdEngine> _engine;
 };
 
