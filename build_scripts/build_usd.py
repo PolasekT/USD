@@ -1648,6 +1648,7 @@ def InstallUSD(context, force, buildArgs):
         extraArgs.append('-DCMAKE_SHARED_LINKER_FLAGS="-fno-lto"')
         
         extraArgs.append('-DPXR_PREFER_SAFETY_OVER_SPEED={}'
+                         .format('ON' if context.safetyFirst else 'OFF'))
 
         if context.buildPython:
             extraArgs.append('-DPXR_ENABLE_PYTHON_SUPPORT=ON')
